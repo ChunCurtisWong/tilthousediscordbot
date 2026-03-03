@@ -1,0 +1,26 @@
+# ── Environment files (contain secrets — never commit) ───────────────────────
+.env.development
+.env.production
+.env.local
+.env
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Node dependencies ─────────────────────────────────────────────────────────
+node_modules/
+
+# ── Runtime data (generated automatically at runtime) ────────────────────────
+data/*.json
+
+# ── OS artifacts ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Editor artifacts ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
