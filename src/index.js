@@ -1,6 +1,7 @@
 // ── Load environment variables before anything else ─────────────────────────
 const env = process.env.NODE_ENV || 'development';
 require('dotenv').config({ path: require('path').join(process.cwd(), `.env.${env}`) });
+console.log('DISCORD_TOKEN after dotenv:', process.env.DISCORD_TOKEN);
 
 const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
