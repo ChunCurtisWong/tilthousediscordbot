@@ -87,6 +87,8 @@ process.on('SIGINT', () => {
 });
 
 // ── Login ────────────────────────────────────────────────────────────────────
+console.log('NODE_ENV:', env, '| cwd:', process.cwd());
+console.log('dotenv path:', require('path').join(process.cwd(), `.env.${env}`));
 const token = process.env.DISCORD_TOKEN;
 if (!token) {
   logger.error('DISCORD_TOKEN is not set. Check your .env file and NODE_ENV.');
