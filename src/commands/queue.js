@@ -45,31 +45,54 @@ function parseTime(timeStr) {
 }
 
 /**
- * Fetches and edits the live queue message, or posts a new one if not found.
- * Always includes the Join/Leave buttons as components.
+ * Sends an ephemeral reply or followUp depending on whether the interaction
+ * has already been deferred (button path) or not (slash command path).
  */
-async function upsertQueueMessage(interaction, game, queueData) {
+function respond(interaction, opts) {
+  return interaction.deferred
+    ? interaction.followUp({ ...opts, ephemeral: true })
+    : interaction.reply({ ...opts, ephemeral: true });
+}
+
+/**
+ * Updates the live queue embed with the current state.
+ *
+ * Button path  → interaction.editReply() edits the message the button lives on
+ *               in-place, with no new message posted.
+ * Slash path   → edits the stored embed message by ID, or posts a new one
+ *               if the original was deleted.
+ */
+async function refreshEmbed(interaction, game, queueData) {
   const embed = buildQueueEmbed(game, queueData);
   const components = [buildQueueComponents(game)];
 
+  if (interaction.isButton()) {
+    // editReply targets the exact message the button was on
+    await interaction.editReply({ embeds: [embed], components });
+    // Keep stored IDs in sync (they should already match)
+    queueData.messageId = interaction.message.id;
+    queueData.channelId = interaction.channelId;
+    return;
+  }
+
+  // Slash command: edit the stored embed message, or post a fresh one
   if (queueData.messageId && queueData.channelId) {
     try {
       const ch = await interaction.client.channels.fetch(queueData.channelId);
       const msg = await ch.messages.fetch(queueData.messageId);
       await msg.edit({ embeds: [embed], components });
-      return msg;
+      return;
     } catch {
-      // Message was deleted or channel changed — fall through to posting new
+      // Stored message is gone — fall through to posting a new one
     }
   }
 
   const msg = await interaction.channel.send({ embeds: [embed], components });
   queueData.messageId = msg.id;
   queueData.channelId = interaction.channel.id;
-  return msg;
 }
 
-// ─── Shared join logic (used by slash command and buttons) ──────────────────
+// ─── Shared join logic ──────────────────────────────────────────────────────
 
 async function processJoin(interaction, game, userId, username, { minOpt, maxOpt, timeStr }) {
   const queueData = storage.getQueue(game);
@@ -77,10 +100,10 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
   // ── Already in queue or fill ─────────────────────────────────────
   if (queueData.players.find(p => p.userId === userId)) {
-    return interaction.reply({ content: `❌ You are already in the **${game}** queue.`, ephemeral: true });
+    return respond(interaction, { content: `❌ You are already in the **${game}** queue.` });
   }
   if (queueData.fill.find(p => p.userId === userId)) {
-    return interaction.reply({ content: `❌ You are already on the **${game}** fill list.`, ephemeral: true });
+    return respond(interaction, { content: `❌ You are already on the **${game}** fill list.` });
   }
 
   // ── Apply queue parameters (first setter wins for each) ──────────
@@ -88,21 +111,20 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   if (maxOpt !== null && queueData.max === null) queueData.max = maxOpt;
 
   if (minOpt !== null && maxOpt !== null && minOpt >= maxOpt) {
-    return interaction.reply({ content: '❌ `min` must be less than `max`.', ephemeral: true });
+    return respond(interaction, { content: '❌ `min` must be less than `max`.' });
   }
 
   if (timeStr && queueData.scheduledTime === null) {
     const ts = parseTime(timeStr);
     if (!ts) {
-      return interaction.reply({
+      return respond(interaction, {
         content:
           '❌ Could not parse the time. Try formats like:\n' +
           '`7pm`  `7:30pm`  `19:00`  `2024-06-15T18:00:00Z`  `1718474400`',
-        ephemeral: true,
       });
     }
     if (ts <= Math.floor(Date.now() / 1000)) {
-      return interaction.reply({ content: '❌ The scheduled time must be in the future.', ephemeral: true });
+      return respond(interaction, { content: '❌ The scheduled time must be in the future.' });
     }
     queueData.scheduledTime = ts;
   }
@@ -112,22 +134,21 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   // ── Queue full → add to fill list ────────────────────────────────
   if (max !== null && queueData.players.length >= max) {
     queueData.fill.push({ userId, username, joinedAt: Date.now() });
-    await upsertQueueMessage(interaction, game, queueData);
+    await refreshEmbed(interaction, game, queueData);
     storage.saveQueue(game, queueData);
 
     const pos = queueData.fill.length;
     logger.info('Player added to fill list', { userId, game, fillPosition: pos });
-    return interaction.reply({
+    return respond(interaction, {
       content:
         `✅ The **${game}** queue is full — you've been added to the fill list at position **#${pos}**.\n` +
         `You'll be promoted automatically if a spot opens up!`,
-      ephemeral: true,
     });
   }
 
   // ── Add to main queue ────────────────────────────────────────────
   queueData.players.push({ userId, username, joinedAt: Date.now() });
-  await upsertQueueMessage(interaction, game, queueData);
+  await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
 
   const count = queueData.players.length;
@@ -139,11 +160,13 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   if (scheduledTime) joinMsg += `\n📅 Scheduled for <t:${scheduledTime}:F>`;
 
   logger.info('Player joined queue', { userId, game, count, min, max, scheduledTime });
-  await interaction.reply({ content: joinMsg, ephemeral: true });
+  await respond(interaction, { content: joinMsg });
 
+  // Public notifications — always sent to the channel, not as ephemeral
+  const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
-  // ── Max reached: close queue and ping everyone ────────────────────
+  // ── Max reached: ping everyone ────────────────────────────────────
   if (max !== null && count >= max) {
     logger.info('Queue max reached', { game, count, max });
     const fullEmbed = new EmbedBuilder()
@@ -155,12 +178,12 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
           (scheduledTime ? `\n\n📅 **Scheduled:** <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)` : '')
       )
       .setTimestamp();
-    await interaction.channel.send({
+    await channel.send({
       content: `${pingList}\n🔒 The **${game}** queue is full — no more spots!`,
       embeds: [fullEmbed],
     });
   }
-  // ── Min reached (max not yet hit): notify game is ready ──────────
+  // ── Min reached (max not yet hit): notify ─────────────────────────
   else if (min !== null && count >= min) {
     logger.info('Queue min reached', { game, count, min });
     const readyEmbed = new EmbedBuilder()
@@ -173,13 +196,13 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
           (max ? `\n\nThe queue will close at **${max}** players.` : '')
       )
       .setTimestamp();
-    await interaction.channel.send({
+    await channel.send({
       content: `${pingList}\n✅ The **${game}** queue has enough players — let's go!`,
       embeds: [readyEmbed],
     });
   }
 
-  // ── Scheduled within 10 min: ping immediately ────────────────────
+  // ── Scheduled within 10 min: ping immediately ─────────────────────
   if (scheduledTime && !queueData.reminderSent) {
     const secsUntil = scheduledTime - Math.floor(Date.now() / 1000);
     if (secsUntil <= 600 && secsUntil > 0) {
@@ -187,14 +210,14 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       storage.saveQueue(game, queueData);
       const minutesLeft = Math.max(1, Math.ceil(secsUntil / 60));
       logger.info('Queue scheduled within 10 min — pinging immediately', { game, minutesLeft });
-      await interaction.channel.send({
+      await channel.send({
         content: `${pingList}\n⏰ **${game}** starts in **${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}**! <t:${scheduledTime}:R>`,
       });
     }
   }
 }
 
-// ─── Shared leave logic (used by slash command and buttons) ─────────────────
+// ─── Shared leave logic ─────────────────────────────────────────────────────
 
 async function processLeave(interaction, game, userId) {
   const queueData = storage.getQueue(game);
@@ -204,23 +227,20 @@ async function processLeave(interaction, game, userId) {
   const fillIdx = queueData.fill.findIndex(p => p.userId === userId);
 
   if (playerIdx === -1 && fillIdx === -1) {
-    return interaction.reply({
+    return respond(interaction, {
       content: `❌ You are not in the **${game}** queue or fill list.`,
-      ephemeral: true,
     });
   }
+
+  const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
 
   // ── Leaving main queue ───────────────────────────────────────────
   if (playerIdx !== -1) {
     queueData.players.splice(playerIdx, 1);
 
-    // Promote first fill player if available
     if (queueData.fill.length > 0) {
       const promoted = queueData.fill.shift();
       queueData.players.push(promoted);
-
-      await upsertQueueMessage(interaction, game, queueData);
-      storage.saveQueue(game, queueData);
 
       logger.info('Fill player promoted to main queue', {
         promotedUserId: promoted.userId,
@@ -229,25 +249,28 @@ async function processLeave(interaction, game, userId) {
         fillRemaining: queueData.fill.length,
       });
 
-      await interaction.channel.send({
+      await refreshEmbed(interaction, game, queueData);
+      storage.saveQueue(game, queueData);
+
+      await channel.send({
         content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
       });
     } else {
-      await upsertQueueMessage(interaction, game, queueData);
+      await refreshEmbed(interaction, game, queueData);
       storage.saveQueue(game, queueData);
       logger.info('Player left main queue', { userId, game, remaining: queueData.players.length });
     }
 
-    return interaction.reply({ content: `✅ You left the **${game}** queue.`, ephemeral: true });
+    return respond(interaction, { content: `✅ You left the **${game}** queue.` });
   }
 
   // ── Leaving fill list ────────────────────────────────────────────
   queueData.fill.splice(fillIdx, 1);
-  await upsertQueueMessage(interaction, game, queueData);
+  await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
 
   logger.info('Player left fill list', { userId, game, fillRemaining: queueData.fill.length });
-  return interaction.reply({ content: `✅ You've been removed from the **${game}** fill list.`, ephemeral: true });
+  return respond(interaction, { content: `✅ You've been removed from the **${game}** fill list.` });
 }
 
 // ─── Command definition ─────────────────────────────────────────────────────
@@ -363,7 +386,6 @@ module.exports = {
             .setTitle(`🚫 Queue Cleared: ${game}`)
             .setDescription(`The **${game}** queue was cleared by <@${userId}>.`)
             .setTimestamp();
-          // Remove buttons from the cleared embed
           await msg.edit({ embeds: [clearedEmbed], components: [] });
         } catch (err) {
           logger.warn('/th-queue clear: could not edit old queue embed', { error: err.message });
@@ -376,8 +398,11 @@ module.exports = {
     }
   },
 
-  // Exported for button interaction dispatch in interactionCreate.js
-  handleButtonJoin(interaction, game) {
+  // Exported for button interaction dispatch in interactionCreate.js.
+  // deferUpdate() is called first so Discord acknowledges the click instantly,
+  // then processJoin/Leave use editReply() to update the message in-place.
+  async handleButtonJoin(interaction, game) {
+    await interaction.deferUpdate();
     return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
       minOpt: null,
       maxOpt: null,
@@ -385,7 +410,8 @@ module.exports = {
     });
   },
 
-  handleButtonLeave(interaction, game) {
+  async handleButtonLeave(interaction, game) {
+    await interaction.deferUpdate();
     return processLeave(interaction, game, interaction.user.id);
   },
 };
