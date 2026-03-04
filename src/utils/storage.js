@@ -61,7 +61,15 @@ function getQueues() {
 }
 
 function getQueue(game) {
-  return getQueues()[game] || { players: [], threshold: null, messageId: null, channelId: null };
+  return getQueues()[game] || {
+    players: [],
+    min: null,
+    max: null,
+    scheduledTime: null,
+    reminderSent: false,
+    messageId: null,
+    channelId: null,
+  };
 }
 
 function saveQueue(game, queueData) {

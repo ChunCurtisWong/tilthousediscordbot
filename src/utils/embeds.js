@@ -3,25 +3,66 @@ const storage = require('./storage');
 
 /**
  * Builds the live-updating queue status embed.
+ * Handles optional min/max thresholds and an optional scheduled time,
+ * showing per-user local times via Discord Unix timestamps.
  */
 function buildQueueEmbed(game, queueData) {
-  const threshold = queueData.threshold || 5;
   const players = queueData.players || [];
-  const filled = players.length;
-  const barLength = Math.min(threshold, 20);
-  const progressBar =
-    '█'.repeat(Math.min(filled, barLength)) +
-    '░'.repeat(Math.max(0, barLength - filled));
+  const count = players.length;
+  const { min, max, scheduledTime } = queueData;
+
+  // ── Status line ──────────────────────────────────────────────────
+  let status;
+  if (max !== null && count >= max) {
+    status = '🔒 Queue Full!';
+  } else if (min !== null && count >= min) {
+    status = '✅ Minimum reached — ready to play!';
+  } else {
+    status = '⏳ Waiting for players...';
+  }
+
+  // ── Capacity display ─────────────────────────────────────────────
+  let capacityStr = `${count} player${count !== 1 ? 's' : ''}`;
+  if (min !== null && max !== null) capacityStr += ` (min ${min} / max ${max})`;
+  else if (min !== null) capacityStr += ` (min ${min})`;
+  else if (max !== null) capacityStr += ` / ${max} max`;
+
+  // ── Scheduled time with per-user local times ─────────────────────
+  let timeSection = '';
+  if (scheduledTime) {
+    timeSection = `\n\n📅 **Scheduled:** <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)`;
+
+    const timezones = storage.getTimezones();
+    const playerTimes = players
+      .map(p => {
+        const tz = timezones[p.userId];
+        if (!tz) return null;
+        const localTime = new Date(scheduledTime * 1000).toLocaleString('en-US', {
+          timeZone: tz,
+          dateStyle: 'short',
+          timeStyle: 'short',
+        });
+        return `<@${p.userId}>: \`${localTime}\` (${tz})`;
+      })
+      .filter(Boolean);
+
+    if (playerTimes.length) {
+      timeSection += `\n\n**Local Times:**\n${playerTimes.join('\n')}`;
+    }
+  }
+
+  // ── Color ────────────────────────────────────────────────────────
+  let color;
+  if (max !== null && count >= max) color = '#FF6B6B';
+  else if (min !== null && count >= min) color = '#00FF7F';
+  else color = '#5865F2';
 
   return new EmbedBuilder()
-    .setColor(filled >= threshold ? '#00FF7F' : '#5865F2')
+    .setColor(color)
     .setTitle(`🎮 Game Queue: ${game}`)
-    .setDescription(
-      `**Status:** ${filled >= threshold ? '✅ Queue Full!' : '⏳ Waiting for players...'}\n\n` +
-        `**Progress:** \`[${progressBar}]\` ${filled}/${threshold}`
-    )
+    .setDescription(`**Status:** ${status}\n**Players:** ${capacityStr}${timeSection}`)
     .addFields({
-      name: `Players in Queue (${filled}/${threshold})`,
+      name: `Players in Queue`,
       value:
         players.length > 0
           ? players.map((p, i) => `${i + 1}. <@${p.userId}>`).join('\n')
@@ -32,48 +73,4 @@ function buildQueueEmbed(game, queueData) {
     .setTimestamp();
 }
 
-/**
- * Builds the schedule/voting embed, showing each player's local time
- * derived from their stored IANA timezone.
- */
-function buildScheduleEmbed(game, scheduleData) {
-  const timezones = storage.getTimezones();
-  const queueData = storage.getQueue(game);
-  const players = queueData.players || [];
-  const { unixTimestamp, votes = {}, hostId } = scheduleData;
-
-  const playerList = players.map(p => {
-    const tz = timezones[p.userId];
-    if (!tz) return `<@${p.userId}> — *no timezone set*`;
-    const localTime = new Date(unixTimestamp * 1000).toLocaleString('en-US', {
-      timeZone: tz,
-      dateStyle: 'short',
-      timeStyle: 'short',
-    });
-    return `<@${p.userId}> — \`${localTime}\` (${tz})`;
-  });
-
-  const yesVotes = Object.values(votes).filter(v => v === '✅').length;
-  const noVotes = Object.values(votes).filter(v => v === '❌').length;
-
-  return new EmbedBuilder()
-    .setColor('#5865F2')
-    .setTitle(`📅 Session Scheduled: ${game}`)
-    .setDescription(
-      `**Proposed Time:** <t:${unixTimestamp}:F> (<t:${unixTimestamp}:R>)\n\n` +
-        `**Players' Local Times:**\n${
-          playerList.length ? playerList.join('\n') : '*No players in queue*'
-        }\n\n` +
-        `**Votes:** ✅ ${yesVotes} | ❌ ${noVotes}\n\n` +
-        `React with ✅ to confirm attendance or ❌ to decline.`
-    )
-    .addFields(
-      { name: 'Host', value: `<@${hostId}>`, inline: true },
-      { name: 'Game', value: game, inline: true },
-      { name: 'Players', value: `${players.length}`, inline: true }
-    )
-    .setFooter({ text: 'Vote by reacting below!' })
-    .setTimestamp();
-}
-
-module.exports = { buildQueueEmbed, buildScheduleEmbed };
+module.exports = { buildQueueEmbed };
