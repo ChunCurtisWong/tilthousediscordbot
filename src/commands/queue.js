@@ -31,7 +31,7 @@ async function upsertQueueMessage(interaction, game, queueData) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('queue')
+    .setName('th-queue')
     .setDescription('Manage game queues')
     .addSubcommand(sub =>
       sub
@@ -80,7 +80,7 @@ module.exports = {
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
-    logger.info(`Command: /queue ${sub}`, { userId, username, game });
+    logger.info(`Command: /th-queue ${sub}`, { userId, username, game });
 
     // ── /queue join ─────────────────────────────────────────────────
     if (sub === 'join') {
@@ -123,7 +123,7 @@ module.exports = {
             `The **${game}** queue is now full with **${filled}** players!\n\n` +
               `**Players:** ${pingList}\n\n` +
               `The host can now schedule a session:\n` +
-              `\`/schedule ${game} <ISO time or Unix timestamp>\``
+              `\`/th-schedule ${game} <ISO time or Unix timestamp>\``
           )
           .setTimestamp();
 
@@ -191,7 +191,7 @@ module.exports = {
             .setTimestamp();
           await msg.edit({ embeds: [clearedEmbed] });
         } catch (err) {
-          logger.warn('/queue clear: could not edit old queue embed', { error: err.message });
+          logger.warn('/th-queue clear: could not edit old queue embed', { error: err.message });
         }
       }
 

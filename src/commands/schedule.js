@@ -27,7 +27,7 @@ function parseTime(timeStr) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('schedule')
+    .setName('th-schedule')
     .setDescription('Schedule a game session for all queued players')
     .addStringOption(opt =>
       opt.setName('game').setDescription('Game to schedule').setRequired(true)
@@ -45,7 +45,7 @@ module.exports = {
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
-    logger.info('Command: /schedule', { userId, username, game, timeStr });
+    logger.info('Command: /th-schedule', { userId, username, game, timeStr });
 
     // ── Validate queue exists ───────────────────────────────────────
     const queueData = storage.getQueue(game);
@@ -53,7 +53,7 @@ module.exports = {
       return interaction.reply({
         content:
           `❌ No active queue found for **${game}**.\n` +
-          `Players must first join with \`/queue join ${game}\`.`,
+          `Players must first join with \`/th-queue join ${game}\`.`,
         ephemeral: true,
       });
     }

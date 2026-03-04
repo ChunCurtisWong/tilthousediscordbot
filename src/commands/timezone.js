@@ -22,7 +22,7 @@ function validateTimezone(tz) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('timezone')
+    .setName('th-timezone')
     .setDescription('Manage your timezone settings')
     .addSubcommand(sub =>
       sub
@@ -55,7 +55,7 @@ module.exports = {
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
-    logger.info(`Command: /timezone ${sub}`, { userId, username });
+    logger.info(`Command: /th-timezone ${sub}`, { userId, username });
 
     // ── /timezone set ───────────────────────────────────────────────
     if (sub === 'set') {
@@ -101,7 +101,7 @@ module.exports = {
         return interaction.reply({
           content:
             "❌ You haven't set a timezone yet.\n" +
-            'Use `/timezone set [timezone]` to register one.',
+            'Use `/th-timezone set [timezone]` to register one.',
           ephemeral: true,
         });
       }

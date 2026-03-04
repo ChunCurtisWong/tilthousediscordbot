@@ -11,7 +11,7 @@ module.exports = {
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
     client.user.setPresence({
-      activities: [{ name: 'game queues | /queue join', type: 3 }],
+      activities: [{ name: 'game queues | /th-queue join', type: 3 }],
       status: 'online',
     });
 
