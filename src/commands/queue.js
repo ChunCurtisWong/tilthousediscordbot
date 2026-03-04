@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
@@ -273,6 +273,44 @@ async function processLeave(interaction, game, userId) {
   return respond(interaction, { content: `✅ You've been removed from the **${game}** fill list.` });
 }
 
+// ─── Clear logic ────────────────────────────────────────────────────────────
+
+async function processClear(interaction, game, userId) {
+  const queueData = storage.getQueue(game);
+  const isHost = queueData.players.length > 0 && queueData.players[0].userId === userId;
+  const isMod = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+
+  if (!isHost && !isMod) {
+    return interaction.update({
+      content: `❌ You are not the host of the **${game}** queue and do not have moderator permissions.`,
+      components: [],
+    });
+  }
+
+  if (queueData.messageId && queueData.channelId) {
+    try {
+      const ch = await interaction.client.channels.fetch(queueData.channelId);
+      const msg = await ch.messages.fetch(queueData.messageId);
+      const clearedEmbed = new EmbedBuilder()
+        .setColor('#FF6B6B')
+        .setTitle(`🚫 Queue Cleared: ${game}`)
+        .setDescription(`The **${game}** queue was cleared by <@${userId}>.`)
+        .setTimestamp();
+      await msg.edit({ embeds: [clearedEmbed], components: [] });
+    } catch (err) {
+      logger.warn('processClear: could not edit old queue embed', { error: err.message });
+    }
+  }
+
+  storage.deleteQueue(game);
+  logger.info('Queue cleared', { userId, game });
+
+  return interaction.update({
+    content: `✅ The **${game}** queue has been cleared.`,
+    components: [],
+  });
+}
+
 // ─── Command definition ─────────────────────────────────────────────────────
 
 module.exports = {
@@ -329,14 +367,11 @@ module.exports = {
       sub
         .setName('clear')
         .setDescription('Clear a game queue (host or moderator only)')
-        .addStringOption(opt =>
-          opt.setName('game').setDescription('Game queue to clear').setRequired(true)
-        )
     ),
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
-    const game = interaction.options.getString('game').trim();
+    const game = interaction.options.getString('game')?.trim() ?? '';
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
@@ -365,37 +400,56 @@ module.exports = {
 
     // ── /th-queue clear ──────────────────────────────────────────────
     if (sub === 'clear') {
-      const queueData = storage.getQueue(game);
-      const isHost =
-        queueData.players.length > 0 && queueData.players[0].userId === userId;
+      const queues = storage.getQueues();
       const isMod = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
-      if (!isHost && !isMod) {
-        return interaction.reply({
-          content: '❌ Only the queue host or a moderator can clear the queue.',
-          ephemeral: true,
-        });
+      // Build list of queues this user is allowed to clear
+      const clearable = Object.entries(queues).filter(([, q]) =>
+        isMod || q.players?.[0]?.userId === userId
+      );
+
+      if (clearable.length === 0) {
+        const reason = Object.keys(queues).length === 0
+          ? 'No active queues to clear.'
+          : '❌ You are not the host of any active queue and do not have moderator permissions.';
+        return interaction.reply({ content: reason, ephemeral: true });
       }
 
-      if (queueData.messageId && queueData.channelId) {
-        try {
-          const ch = await interaction.client.channels.fetch(queueData.channelId);
-          const msg = await ch.messages.fetch(queueData.messageId);
-          const clearedEmbed = new EmbedBuilder()
-            .setColor('#FF6B6B')
-            .setTitle(`🚫 Queue Cleared: ${game}`)
-            .setDescription(`The **${game}** queue was cleared by <@${userId}>.`)
-            .setTimestamp();
-          await msg.edit({ embeds: [clearedEmbed], components: [] });
-        } catch (err) {
-          logger.warn('/th-queue clear: could not edit old queue embed', { error: err.message });
+      const options = clearable.slice(0, 25).map(([name, q]) => {
+        const count = q.players?.length ?? 0;
+        const fill = q.fill?.length ?? 0;
+        let desc = `${count} player${count !== 1 ? 's' : ''}`;
+        if (fill > 0) desc += `, ${fill} on fill`;
+        if (q.scheduledTime) {
+          const secsLeft = q.scheduledTime - Math.floor(Date.now() / 1000);
+          if (secsLeft > 0) {
+            const h = Math.floor(secsLeft / 3600);
+            const m = Math.ceil((secsLeft % 3600) / 60);
+            desc += h > 0 ? ` · in ${h}h ${m}m` : ` · in ${m}m`;
+          }
         }
-      }
+        return new StringSelectMenuOptionBuilder()
+          .setLabel(name.slice(0, 100))
+          .setValue(name.slice(0, 100))
+          .setDescription(desc.slice(0, 100));
+      });
 
-      storage.deleteQueue(game);
-      logger.info('Queue cleared', { userId, game });
-      return interaction.reply({ content: `✅ The **${game}** queue has been cleared.` });
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('q:clear_select')
+        .setPlaceholder('Choose a queue to clear…')
+        .addOptions(options);
+
+      return interaction.reply({
+        content: '🗑️ Select a queue to clear:',
+        components: [new ActionRowBuilder().addComponents(select)],
+        ephemeral: true,
+      });
     }
+  },
+
+  // Exported for select menu dispatch in interactionCreate.js.
+  handleClearSelect(interaction) {
+    return processClear(interaction, interaction.values[0], interaction.user.id);
   },
 
   // Exported for button interaction dispatch in interactionCreate.js.

@@ -75,6 +75,31 @@ module.exports = {
       return;
     }
 
+    // ── Queue clear select menu (q:clear_select) ─────────────────────
+    if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'q:clear_select') {
+        const queueCmd = interaction.client.commands.get('th-queue');
+        try {
+          logger.info('Select: queue clear', { game: interaction.values[0], userId: interaction.user.id });
+          await queueCmd.handleClearSelect(interaction);
+        } catch (err) {
+          logger.error('Select interaction error', {
+            customId: interaction.customId,
+            error: err.message,
+            stack: err.stack,
+            userId: interaction.user.id,
+          });
+          const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMsg).catch(() => {});
+          } else {
+            await interaction.reply(errorMsg).catch(() => {});
+          }
+        }
+      }
+      return;
+    }
+
     // ── Autocomplete ────────────────────────────────────────────────
     if (interaction.isAutocomplete()) {
       const command = interaction.client.commands.get(interaction.commandName);
