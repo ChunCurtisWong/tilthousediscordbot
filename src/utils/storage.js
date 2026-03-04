@@ -113,6 +113,7 @@ module.exports = {
   getTimezones,
   setUserTimezone,
   getUserTimezone,
+  getQueues,
   getQueue,
   saveQueue,
   deleteQueue,
