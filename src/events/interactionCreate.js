@@ -44,6 +44,37 @@ module.exports = {
       return;
     }
 
+    // ── Queue buttons (q:join:<game> / q:leave:<game>) ──────────────
+    if (interaction.isButton()) {
+      const { customId } = interaction;
+      const queueCmd = interaction.client.commands.get('th-queue');
+      try {
+        if (customId.startsWith('q:join:') && queueCmd?.handleButtonJoin) {
+          const game = customId.slice('q:join:'.length);
+          logger.info('Button: queue join', { game, userId: interaction.user.id });
+          await queueCmd.handleButtonJoin(interaction, game);
+        } else if (customId.startsWith('q:leave:') && queueCmd?.handleButtonLeave) {
+          const game = customId.slice('q:leave:'.length);
+          logger.info('Button: queue leave', { game, userId: interaction.user.id });
+          await queueCmd.handleButtonLeave(interaction, game);
+        }
+      } catch (err) {
+        logger.error('Button interaction error', {
+          customId,
+          error: err.message,
+          stack: err.stack,
+          userId: interaction.user.id,
+        });
+        const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp(errorMsg).catch(() => {});
+        } else {
+          await interaction.reply(errorMsg).catch(() => {});
+        }
+      }
+      return;
+    }
+
     // ── Autocomplete ────────────────────────────────────────────────
     if (interaction.isAutocomplete()) {
       const command = interaction.client.commands.get(interaction.commandName);

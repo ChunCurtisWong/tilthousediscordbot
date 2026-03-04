@@ -63,6 +63,7 @@ function getQueues() {
 function getQueue(game) {
   return getQueues()[game] || {
     players: [],
+    fill: [],
     min: null,
     max: null,
     scheduledTime: null,

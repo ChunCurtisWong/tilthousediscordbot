@@ -1,39 +1,45 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const storage = require('./storage');
 
 /**
- * Builds the live-updating queue status embed.
- * Handles optional min/max thresholds and an optional scheduled time,
- * showing per-user local times via Discord Unix timestamps.
+ * Builds the live-updating queue status embed showing the main queue,
+ * optional fill list, scheduled time with per-user Discord timestamps,
+ * and min/max threshold state.
  */
 function buildQueueEmbed(game, queueData) {
   const players = queueData.players || [];
+  const fill = queueData.fill || [];
   const count = players.length;
   const { min, max, scheduledTime } = queueData;
 
-  // ── Status line ──────────────────────────────────────────────────
-  let status;
+  // ── Status & color ───────────────────────────────────────────────
+  let status, color;
   if (max !== null && count >= max) {
     status = '🔒 Queue Full!';
+    color = '#FF6B6B';
   } else if (min !== null && count >= min) {
     status = '✅ Minimum reached — ready to play!';
+    color = '#00FF7F';
   } else {
     status = '⏳ Waiting for players...';
+    color = '#5865F2';
   }
 
-  // ── Capacity display ─────────────────────────────────────────────
-  let capacityStr = `${count} player${count !== 1 ? 's' : ''}`;
-  if (min !== null && max !== null) capacityStr += ` (min ${min} / max ${max})`;
-  else if (min !== null) capacityStr += ` (min ${min})`;
-  else if (max !== null) capacityStr += ` / ${max} max`;
+  // ── Capacity string ──────────────────────────────────────────────
+  let capacityStr;
+  if (max !== null) capacityStr = `${count}/${max} players`;
+  else if (min !== null) capacityStr = `${count} players (min ${min})`;
+  else capacityStr = `${count} player${count !== 1 ? 's' : ''}`;
 
-  // ── Scheduled time with per-user local times ─────────────────────
-  let timeSection = '';
+  // ── Description: status + scheduled time ────────────────────────
+  let description = `**Status:** ${status}`;
   if (scheduledTime) {
-    timeSection = `\n\n📅 **Scheduled:** <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)`;
+    description += `\n\n📅 <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)`;
 
+    // Per-user local times for everyone (main + fill)
     const timezones = storage.getTimezones();
-    const playerTimes = players
+    const everyone = [...players, ...fill];
+    const playerTimes = everyone
       .map(p => {
         const tz = timezones[p.userId];
         if (!tz) return null;
@@ -47,30 +53,56 @@ function buildQueueEmbed(game, queueData) {
       .filter(Boolean);
 
     if (playerTimes.length) {
-      timeSection += `\n\n**Local Times:**\n${playerTimes.join('\n')}`;
+      description += `\n\n**Local Times:**\n${playerTimes.join('\n')}`;
     }
   }
 
-  // ── Color ────────────────────────────────────────────────────────
-  let color;
-  if (max !== null && count >= max) color = '#FF6B6B';
-  else if (min !== null && count >= min) color = '#00FF7F';
-  else color = '#5865F2';
-
-  return new EmbedBuilder()
+  // ── Build embed ──────────────────────────────────────────────────
+  const embed = new EmbedBuilder()
     .setColor(color)
-    .setTitle(`🎮 Game Queue: ${game}`)
-    .setDescription(`**Status:** ${status}\n**Players:** ${capacityStr}${timeSection}`)
+    .setTitle(`🎮 ${game}`)
+    .setDescription(description)
     .addFields({
-      name: `Players in Queue`,
+      name: `👥 ${capacityStr}`,
       value:
         players.length > 0
           ? players.map((p, i) => `${i + 1}. <@${p.userId}>`).join('\n')
           : '*No players yet — be the first!*',
       inline: false,
-    })
-    .setFooter({ text: `Queue: ${game}` })
-    .setTimestamp();
+    });
+
+  if (fill.length > 0) {
+    embed.addFields({
+      name: '🔄 Fill List',
+      value: fill
+        .map((p, i) => `${i + 1}. <@${p.userId}>${i === 0 ? ' *(first in line)*' : ''}`)
+        .join('\n'),
+      inline: false,
+    });
+  }
+
+  embed.setFooter({ text: `Queue: ${game}` }).setTimestamp();
+
+  return embed;
 }
 
-module.exports = { buildQueueEmbed };
+/**
+ * Returns an ActionRow with Join Queue / Leave Queue buttons for a game.
+ * Custom IDs use the format "q:join:<game>" and "q:leave:<game>".
+ */
+function buildQueueComponents(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:join:${game}`)
+      .setLabel('Join Queue')
+      .setEmoji('✅')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`q:leave:${game}`)
+      .setLabel('Leave Queue')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+module.exports = { buildQueueEmbed, buildQueueComponents };
