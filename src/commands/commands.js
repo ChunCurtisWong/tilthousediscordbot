@@ -55,6 +55,8 @@ module.exports = {
             '`/th-trinkets` — View your Trinkets balance and streak',
             '`/th-leaderboard` — View the top 3 Trinket holders',
             '`/th-give @user amount` — (Admin) Give Trinkets to a user',
+            '`/th-coinflip amount choice(optional)` — Bet Trinkets on a coin flip',
+            '`/th-bet @user amount` — Challenge a user to a Trinket duel',
           ].join('\n'),
         },
       )

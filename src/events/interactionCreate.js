@@ -81,6 +81,19 @@ module.exports = {
             await queueCmd.handleClearAllButton(interaction);
           }
 
+        // Gambling buttons
+        } else if (customId.startsWith('gam:')) {
+          const betCmd = interaction.client.commands.get('th-bet');
+          if (customId.startsWith('gam:accept:')) {
+            const betId = customId.slice('gam:accept:'.length);
+            logger.info('Button: bet accept', { betId, userId: interaction.user.id });
+            await betCmd.handleAccept(interaction, betId);
+          } else if (customId.startsWith('gam:decline:')) {
+            const betId = customId.slice('gam:decline:'.length);
+            logger.info('Button: bet decline', { betId, userId: interaction.user.id });
+            await betCmd.handleDecline(interaction, betId);
+          }
+
         // List buttons
         } else if (customId.startsWith('l:')) {
           const listCmd = interaction.client.commands.get('th-list');

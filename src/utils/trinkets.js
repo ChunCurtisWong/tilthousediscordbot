@@ -110,9 +110,52 @@ function claimDaily(userId, username) {
 
 function getLeaderboard(limit = 3) {
   return Object.entries(read())
+    .filter(([key]) => !key.startsWith('_'))
     .map(([userId, p]) => ({ userId, username: p.username ?? 'Unknown User', balance: p.balance ?? 0 }))
     .sort((a, b) => b.balance - a.balance)
     .slice(0, limit);
+}
+
+// ─── Cooldowns ────────────────────────────────────────────────────────────────
+
+const COOLDOWN_MS = 30_000;
+
+/**
+ * Returns milliseconds remaining on cooldown, or null if not on cooldown.
+ */
+function checkCooldown(userId, command) {
+  const cooldowns = read()._cooldowns ?? {};
+  const lastUsed = cooldowns[command]?.[userId] ?? 0;
+  const remaining = lastUsed + COOLDOWN_MS - Date.now();
+  return remaining > 0 ? remaining : null;
+}
+
+function setCooldown(userId, command) {
+  const data = read();
+  if (!data._cooldowns) data._cooldowns = {};
+  if (!data._cooldowns[command]) data._cooldowns[command] = {};
+  data._cooldowns[command][userId] = Date.now();
+  write(data);
+}
+
+// ─── Pending bets ─────────────────────────────────────────────────────────────
+
+function getPendingBet(betId) {
+  return read()._pendingBets?.[betId] ?? null;
+}
+
+function savePendingBet(betId, betData) {
+  const data = read();
+  if (!data._pendingBets) data._pendingBets = {};
+  data._pendingBets[betId] = betData;
+  write(data);
+}
+
+function deletePendingBet(betId) {
+  const data = read();
+  if (!data._pendingBets?.[betId]) return;
+  delete data._pendingBets[betId];
+  write(data);
 }
 
 // ─── Queue payout ─────────────────────────────────────────────────────────────
@@ -151,4 +194,9 @@ module.exports = {
   getLeaderboard,
   payoutQueue,
   streakReward,
+  checkCooldown,
+  setCooldown,
+  getPendingBet,
+  savePendingBet,
+  deletePendingBet,
 };
