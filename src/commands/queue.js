@@ -481,10 +481,7 @@ module.exports = {
     .addSubcommand(sub =>
       sub
         .setName('status')
-        .setDescription('Show the current queue status for a game')
-        .addStringOption(opt =>
-          opt.setName('game').setDescription('Game name to check').setRequired(true)
-        )
+        .setDescription('Show the current status of an active queue')
     )
     .addSubcommand(sub =>
       sub
@@ -569,11 +566,45 @@ module.exports = {
 
     // ── /th-queue status ─────────────────────────────────────────────
     if (sub === 'status') {
-      const game = interaction.options.getString('game')?.trim() ?? '';
-      const queueData = storage.getQueue(game);
+      const queues = storage.getQueues();
+
+      if (Object.keys(queues).length === 0) {
+        return interaction.reply({
+          content: '❌ There are no active queues at the moment.',
+          ephemeral: true,
+        });
+      }
+
+      const options = Object.entries(queues)
+        .slice(0, 25)
+        .map(([name, q]) => {
+          const count = q.players?.length ?? 0;
+          const fill = q.fill?.length ?? 0;
+          let desc = `${count} player${count !== 1 ? 's' : ''}`;
+          if (fill > 0) desc += `, ${fill} on fill`;
+          if (q.scheduledTime) {
+            const secsLeft = q.scheduledTime - Math.floor(Date.now() / 1000);
+            if (secsLeft > 0) {
+              const h = Math.floor(secsLeft / 3600);
+              const m = Math.ceil((secsLeft % 3600) / 60);
+              desc += h > 0 ? ` · in ${h}h ${m}m` : ` · in ${m}m`;
+            }
+          }
+          return new StringSelectMenuOptionBuilder()
+            .setLabel(name.slice(0, 100))
+            .setValue(name.slice(0, 100))
+            .setDescription(desc.slice(0, 100));
+        });
+
+      const select = new StringSelectMenuBuilder()
+        .setCustomId('q:status_select')
+        .setPlaceholder('Choose a queue to view…')
+        .addOptions(options);
+
       return interaction.reply({
-        embeds: [buildQueueEmbed(game, queueData)],
-        components: [buildQueueComponents(game)],
+        content: '📋 Select a queue to view its status:',
+        components: [new ActionRowBuilder().addComponents(select)],
+        ephemeral: true,
       });
     }
 
@@ -741,6 +772,17 @@ module.exports = {
     return interaction.editReply({
       content: `✅ Cleared **${n}** queue${n !== 1 ? 's' : ''}.`,
       components: [],
+    });
+  },
+
+  // ── Status select menu: show the chosen queue's embed (ephemeral) ──
+  async handleStatusSelect(interaction) {
+    const game = interaction.values[0];
+    const queueData = storage.getQueue(game);
+    return interaction.update({
+      content: null,
+      embeds: [buildQueueEmbed(game, queueData)],
+      components: [buildQueueComponents(game)],
     });
   },
 

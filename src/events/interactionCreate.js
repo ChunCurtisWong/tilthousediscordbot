@@ -94,6 +94,9 @@ module.exports = {
       } else if (customId === 'q:leave_select') {
         handler = queueCmd?.handleLeaveSelect;
         logLabel = 'Select: queue leave';
+      } else if (customId === 'q:status_select') {
+        handler = queueCmd?.handleStatusSelect;
+        logLabel = 'Select: queue status';
       } else if (customId === 'q:clear_select') {
         handler = queueCmd?.handleClearSelect;
         logLabel = 'Select: queue clear';
