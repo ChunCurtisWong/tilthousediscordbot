@@ -48,6 +48,15 @@ module.exports = {
             '`/th-roll` — Roll a dice (default 6 sides, up to 1000)',
           ].join('\n'),
         },
+        {
+          name: '🪙 Trinkets',
+          value: [
+            '`/th-daily` — Claim your daily Trinkets reward (streak bonuses!)',
+            '`/th-trinkets` — View your Trinkets balance and streak',
+            '`/th-leaderboard` — View the top 3 Trinket holders',
+            '`/th-give @user amount` — (Admin) Give Trinkets to a user',
+          ].join('\n'),
+        },
       )
       .setFooter({ text: 'Only visible to you' });
 

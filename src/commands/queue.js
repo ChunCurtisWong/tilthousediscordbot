@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
+const { payoutQueue } = require('../utils/trinkets');
 
 // ─── Game list ───────────────────────────────────────────────────────────────
 
@@ -252,9 +253,13 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
-  // ── Max reached: ping everyone ────────────────────────────────────
+  // ── Max reached: ping everyone, pay out trinkets, close queue ────
   if (max !== null && count >= max) {
     logger.info('Queue max reached', { game, count, max });
+
+    // Payout trinkets before deleting queue data
+    const { playerPayouts, fillPayouts } = payoutQueue(queueData);
+
     const fullEmbed = new EmbedBuilder()
       .setColor('#FF6B6B')
       .setTitle(`🔒 Queue Full: ${game}`)
@@ -268,6 +273,22 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       content: `${pingList}\n🔒 The **${game}** queue is full — no more spots!`,
       embeds: [fullEmbed],
     });
+
+    // Build payout notification lines
+    const payoutLines = [
+      ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
+      ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
+    ];
+    if (payoutLines.length > 0) {
+      const payoutEmbed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle('🪙 Trinket Payout')
+        .setDescription(`Queue closed naturally — Trinkets awarded!\n\n${payoutLines.join('\n')}`);
+      await channel.send({ embeds: [payoutEmbed] });
+    }
+
+    storage.deleteQueue(game);
+    return;
   }
   // ── Min reached (max not yet hit): notify ─────────────────────────
   else if (min !== null && count >= min) {
