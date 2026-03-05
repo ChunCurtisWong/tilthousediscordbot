@@ -149,9 +149,12 @@ function respond(interaction, opts) {
 async function refreshEmbed(interaction, game, queueData) {
   const embed = buildQueueEmbed(game, queueData);
   const components = [buildQueueComponents(game)];
+  // Role mention sits as message content so Discord shows it above the embed.
+  // Using content on edits is safe — Discord does not re-notify on message edits.
+  const content = queueData.roleId ? `<@&${queueData.roleId}>` : null;
 
   if (interaction.isButton()) {
-    await interaction.editReply({ embeds: [embed], components });
+    await interaction.editReply({ content, embeds: [embed], components });
     queueData.messageId = interaction.message.id;
     queueData.channelId = interaction.channelId;
     return;
@@ -161,7 +164,7 @@ async function refreshEmbed(interaction, game, queueData) {
     try {
       const ch = await interaction.client.channels.fetch(queueData.channelId);
       const msg = await ch.messages.fetch(queueData.messageId);
-      await msg.edit({ embeds: [embed], components });
+      await msg.edit({ content, embeds: [embed], components });
       return;
     } catch {
       // Stored message is gone — fall through to posting a new one
@@ -169,16 +172,17 @@ async function refreshEmbed(interaction, game, queueData) {
   }
 
   const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
-  const msg = await channel.send({ embeds: [embed], components });
+  const msg = await channel.send({ content, embeds: [embed], components });
   queueData.messageId = msg.id;
   queueData.channelId = channel.id;
 }
 
 // ─── Shared join logic ──────────────────────────────────────────────────────
 
-async function processJoin(interaction, game, userId, username, { minOpt, maxOpt, timeStr }) {
+async function processJoin(interaction, game, userId, username, { minOpt, maxOpt, timeStr, roleId = null }) {
   const queueData = storage.getQueue(game);
   if (!queueData.fill) queueData.fill = [];
+  if (roleId && !queueData.roleId) queueData.roleId = roleId;
 
   // ── Already in queue or fill ─────────────────────────────────────
   if (queueData.players.find(p => p.userId === userId)) {
@@ -420,6 +424,12 @@ module.exports = {
             .setMaxValue(100)
             .setRequired(false)
         )
+        .addRoleOption(opt =>
+          opt
+            .setName('role')
+            .setDescription('Role to ping when the queue is posted')
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -460,6 +470,7 @@ module.exports = {
       const timeStr = interaction.options.getString('time')?.trim() ?? '';
       const minOpt  = interaction.options.getInteger('min_players') ?? null;
       const maxOpt  = interaction.options.getInteger('max_players') ?? null;
+      const roleId  = interaction.options.getRole('role')?.id ?? null;
 
       if (timeStr) {
         const ts = parseTime(timeStr);
@@ -491,6 +502,7 @@ module.exports = {
         timeStr: timeStr || null,
         minOpt,
         maxOpt,
+        roleId,
       });
     }
 
