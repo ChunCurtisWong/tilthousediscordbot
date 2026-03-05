@@ -75,15 +75,52 @@ module.exports = {
       return;
     }
 
-    // ── Queue clear select menu (q:clear_select) ─────────────────────
+    // ── Select menus ─────────────────────────────────────────────────
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId === 'q:clear_select') {
-        const queueCmd = interaction.client.commands.get('th-queue');
+      const { customId } = interaction;
+      const queueCmd = interaction.client.commands.get('th-queue');
+      let handler = null;
+      let logLabel = null;
+
+      if (customId.startsWith('q:game_select')) {
+        handler = queueCmd?.handleGameSelect;
+        logLabel = 'Select: game pick';
+      } else if (customId === 'q:clear_select') {
+        handler = queueCmd?.handleClearSelect;
+        logLabel = 'Select: queue clear';
+      }
+
+      if (handler) {
         try {
-          logger.info('Select: queue clear', { game: interaction.values[0], userId: interaction.user.id });
-          await queueCmd.handleClearSelect(interaction);
+          logger.info(logLabel, { customId, userId: interaction.user.id });
+          await handler.call(queueCmd, interaction);
         } catch (err) {
           logger.error('Select interaction error', {
+            customId,
+            error: err.message,
+            stack: err.stack,
+            userId: interaction.user.id,
+          });
+          const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMsg).catch(() => {});
+          } else {
+            await interaction.reply(errorMsg).catch(() => {});
+          }
+        }
+      }
+      return;
+    }
+
+    // ── Modal submits ─────────────────────────────────────────────────
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('q:game_modal')) {
+        const queueCmd = interaction.client.commands.get('th-queue');
+        try {
+          logger.info('Modal: game name', { userId: interaction.user.id });
+          await queueCmd.handleGameModal(interaction);
+        } catch (err) {
+          logger.error('Modal interaction error', {
             customId: interaction.customId,
             error: err.message,
             stack: err.stack,

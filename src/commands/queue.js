@@ -1,7 +1,70 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
+
+// ─── Game list ───────────────────────────────────────────────────────────────
+
+const GAMES = [
+  'Counter Strike',
+  'League of Legends (SR)',
+  'League of Legends (ARAM)',
+  'Valorant',
+  'Rainbow 6 Siege',
+  'Minecraft',
+  'MW2 (Michael Myers)',
+];
+
+// ─── Join param encoding ─────────────────────────────────────────────────────
+// time/min/max are packed into select menu and modal custom IDs so they
+// survive across the multi-step interaction chain without server-side state.
+// Format: "<prefix>|<timeStr>|<minOpt>|<maxOpt>"  (empty string = absent)
+
+function encodeJoinParams(prefix, timeStr, minOpt, maxOpt) {
+  return `${prefix}|${timeStr ?? ''}|${minOpt ?? ''}|${maxOpt ?? ''}`;
+}
+
+function decodeJoinParams(customId) {
+  const [, rawTime, rawMin, rawMax] = customId.split('|');
+  return {
+    timeStr: rawTime || null,
+    minOpt: rawMin ? parseInt(rawMin, 10) : null,
+    maxOpt: rawMax ? parseInt(rawMax, 10) : null,
+  };
+}
+
+function buildGameSelectRow(timeStr, minOpt, maxOpt) {
+  const options = [
+    ...GAMES.map(g => new StringSelectMenuOptionBuilder().setLabel(g).setValue(g)),
+    new StringSelectMenuOptionBuilder()
+      .setLabel('Other')
+      .setValue('__other__')
+      .setDescription('Type a custom game name'),
+  ];
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(encodeJoinParams('q:game_select', timeStr, minOpt, maxOpt))
+      .setPlaceholder('Choose a game…')
+      .addOptions(options)
+  );
+}
+
+function buildOtherModal(timeStr, minOpt, maxOpt) {
+  return new ModalBuilder()
+    .setCustomId(encodeJoinParams('q:game_modal', timeStr, minOpt, maxOpt))
+    .setTitle('Enter Game Name')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('game_name')
+          .setLabel('Game name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Apex Legends')
+          .setRequired(true)
+          .setMaxLength(100)
+      )
+    );
+}
 
 /**
  * Parses a user-supplied time string into a Unix timestamp (seconds).
@@ -45,13 +108,26 @@ function parseTime(timeStr) {
 }
 
 /**
- * Sends an ephemeral reply or followUp depending on whether the interaction
- * has already been deferred (button path) or not (slash command path).
+ * Sends an ephemeral confirmation appropriate to the interaction type:
+ *
+ *  - Not deferred (slash command)  → reply({ ephemeral: true })
+ *  - Button (deferred via deferUpdate) → followUp({ ephemeral: true })
+ *    The queue embed was already updated via editReply; this sends a
+ *    separate ephemeral so the button message itself stays intact.
+ *  - Select menu or modal (deferred via deferUpdate / deferReply)
+ *    → editReply({ components: [] })
+ *    Updates the ephemeral interaction message in-place, removing the
+ *    dropdown or filling the deferred reply with the confirmation text.
  */
 function respond(interaction, opts) {
-  return interaction.deferred
-    ? interaction.followUp({ ...opts, ephemeral: true })
-    : interaction.reply({ ...opts, ephemeral: true });
+  if (!interaction.deferred) {
+    return interaction.reply({ ...opts, ephemeral: true });
+  }
+  if (interaction.isButton()) {
+    return interaction.followUp({ ...opts, ephemeral: true });
+  }
+  // Select menu (deferUpdate) or modal (deferReply): update the ephemeral in-place
+  return interaction.editReply({ ...opts, components: [] });
 }
 
 /**
@@ -322,9 +398,6 @@ module.exports = {
         .setName('join')
         .setDescription('Join a game queue, optionally setting thresholds and a scheduled time')
         .addStringOption(opt =>
-          opt.setName('game').setDescription('Game name to queue for').setRequired(true)
-        )
-        .addStringOption(opt =>
           opt
             .setName('time')
             .setDescription('Scheduled time — e.g. 7pm, 7:30pm, 19:00, 2024-06-15T18:00:00Z, or Unix timestamp')
@@ -378,10 +451,13 @@ module.exports = {
     logger.info(`Command: /th-queue ${sub}`, { userId, username, game });
 
     if (sub === 'join') {
-      return processJoin(interaction, game, userId, username, {
-        minOpt: interaction.options.getInteger('min'),
-        maxOpt: interaction.options.getInteger('max'),
-        timeStr: interaction.options.getString('time'),
+      const timeStr = interaction.options.getString('time');
+      const minOpt = interaction.options.getInteger('min');
+      const maxOpt = interaction.options.getInteger('max');
+      return interaction.reply({
+        content: '🎮 Choose a game to queue for:',
+        components: [buildGameSelectRow(timeStr, minOpt, maxOpt)],
+        ephemeral: true,
       });
     }
 
@@ -447,11 +523,40 @@ module.exports = {
     }
   },
 
+  // ── Game select menu: predefined game chosen or "Other" selected ───
+  async handleGameSelect(interaction) {
+    const { timeStr, minOpt, maxOpt } = decodeJoinParams(interaction.customId);
+    const game = interaction.values[0];
+
+    if (game === '__other__') {
+      // showModal() is the interaction response — no deferUpdate needed
+      return interaction.showModal(buildOtherModal(timeStr, minOpt, maxOpt));
+    }
+
+    await interaction.deferUpdate();
+    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+      timeStr, minOpt, maxOpt,
+    });
+  },
+
+  // ── Game modal: custom game name submitted ─────────────────────────
+  async handleGameModal(interaction) {
+    const { timeStr, minOpt, maxOpt } = decodeJoinParams(interaction.customId);
+    const game = interaction.fields.getTextInputValue('game_name').trim();
+
+    await interaction.deferReply({ ephemeral: true });
+    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+      timeStr, minOpt, maxOpt,
+    });
+  },
+
+  // ── Clear select menu ──────────────────────────────────────────────
   // Exported for select menu dispatch in interactionCreate.js.
   handleClearSelect(interaction) {
     return processClear(interaction, interaction.values[0], interaction.user.id);
   },
 
+  // ── Queue embed buttons ────────────────────────────────────────────
   // Exported for button interaction dispatch in interactionCreate.js.
   // deferUpdate() is called first so Discord acknowledges the click instantly,
   // then processJoin/Leave use editReply() to update the message in-place.
