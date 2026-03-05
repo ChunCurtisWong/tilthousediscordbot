@@ -43,14 +43,14 @@ function buildChallengeEmbed(betData) {
     .setTimestamp();
 }
 
-function buildResultEmbed(winnerId, loserId, amount, winnerNewBalance, loserNewBalance) {
+function buildResultEmbed(winnerId, loserId, amount) {
   return new EmbedBuilder()
     .setColor('#00CC66')
     .setTitle('🏆 Duel Resolved!')
     .setDescription(
       `<@${winnerId}> won the duel against <@${loserId}>!\n\n` +
-        `**<@${winnerId}>** gained **+${amount} 🪙** → ${winnerNewBalance} 🪙\n` +
-        `**<@${loserId}>** lost **-${amount} 🪙** → ${loserNewBalance} 🪙`
+        `<@${winnerId}> gained **+${amount} 🪙**\n` +
+        `<@${loserId}> lost **-${amount} 🪙**`
     )
     .setTimestamp();
 }
@@ -245,9 +245,17 @@ module.exports = {
 
     logger.info('Bet resolved', { betId, winnerId, loserId, amount: betData.amount });
 
+    // Public embed — shows outcome but not running balances
     await interaction.editReply({
-      embeds: [buildResultEmbed(winnerId, loserId, betData.amount, winnerNewBal, loserNewBal)],
+      embeds: [buildResultEmbed(winnerId, loserId, betData.amount)],
       components: [buildButtons(betId, true)],
+    });
+
+    // Ephemeral balance reveal — only visible to the accepter (button interactor)
+    const accepterNewBal = interaction.user.id === winnerId ? winnerNewBal : loserNewBal;
+    await interaction.followUp({
+      content: `Your new balance: **${accepterNewBal} 🪙**`,
+      ephemeral: true,
     });
   },
 

@@ -5,30 +5,50 @@ const logger = require('../utils/logger');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('th-coinflip')
-    .setDescription('Bet Trinkets on a coin flip')
+    .setDescription('Flip a coin — optionally bet Trinkets on the result')
     .addStringOption(opt =>
       opt
         .setName('amount')
-        .setDescription('Amount to bet (number or "all")')
-        .setRequired(true)
+        .setDescription('Amount to bet (number or "all") — leave blank for a free flip')
     )
     .addStringOption(opt =>
       opt
         .setName('choice')
-        .setDescription('Pick a side (optional)')
+        .setDescription('Pick a side (optional, only applies when betting)')
         .addChoices({ name: 'Heads', value: 'heads' }, { name: 'Tails', value: 'tails' })
     ),
 
   async execute(interaction) {
     const userId   = interaction.user.id;
     const username = interaction.user.username;
+    const amountStr = interaction.options.getString('amount');
+    const choice    = interaction.options.getString('choice'); // 'heads' | 'tails' | null
+    const betting   = amountStr !== null;
 
-    // ── Cooldown check ────────────────────────────────────────────────
+    // ── Flip the coin ─────────────────────────────────────────────────
+    const result  = Math.random() < 0.5 ? 'heads' : 'tails';
+    const isHeads = result === 'heads';
+    const coinEmoji   = isHeads ? '🪙' : '🌑';
+    const resultLabel = isHeads ? 'Heads' : 'Tails';
+
+    // ── Free flip (no bet) ────────────────────────────────────────────
+    if (!betting) {
+      const embed = new EmbedBuilder()
+        .setColor(isHeads ? '#FFD700' : '#C0C0C0')
+        .setTitle(`${coinEmoji} ${resultLabel}!`)
+        .setDescription(`The coin landed on **${resultLabel}**.`)
+        .setTimestamp();
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    // ── Betting flow ──────────────────────────────────────────────────
+
+    // Cooldown check
     const remaining = checkCooldown(userId, 'coinflip');
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
       return interaction.reply({
-        content: `⏳ Wait **${secs}s** before flipping again.`,
+        content: `⏳ Wait **${secs}s** before placing another bet.`,
         ephemeral: true,
       });
     }
@@ -36,8 +56,7 @@ module.exports = {
     const player  = getPlayer(userId);
     const balance = player.balance ?? 0;
 
-    // ── Parse amount ──────────────────────────────────────────────────
-    const amountStr = interaction.options.getString('amount');
+    // Parse and validate bet
     let bet;
     if (amountStr.toLowerCase() === 'all') {
       bet = balance;
@@ -58,35 +77,34 @@ module.exports = {
       });
     }
 
-    // ── Flip ──────────────────────────────────────────────────────────
-    const choice = interaction.options.getString('choice'); // 'heads' | 'tails' | null
-    const result = Math.random() < 0.5 ? 'heads' : 'tails';
-    const won    = choice !== null ? result === choice : result === 'heads';
+    // Determine win/loss: with choice → match wins; without → heads wins
+    const won = choice !== null ? result === choice : isHeads;
 
-    // ── Apply result ──────────────────────────────────────────────────
+    // Apply and set cooldown
     const newBalance = addTrinkets(userId, won ? bet : -bet, username);
     setCooldown(userId, 'coinflip');
 
-    logger.info('Coinflip result', { userId, bet, choice, result, won, newBalance });
+    logger.info('Coinflip bet result', { userId, bet, choice, result, won, newBalance });
 
-    const coinEmoji   = result === 'heads' ? '🪙' : '🌑';
-    const resultLabel = result === 'heads' ? 'Heads' : 'Tails';
-
+    // Public embed — result and win/loss, no balance
     let description = `${coinEmoji} The coin landed on **${resultLabel}**!\n\n`;
     if (choice) {
       description += `You picked **${choice === 'heads' ? 'Heads' : 'Tails'}** — `;
     }
-    description += won
-      ? `**You won ${bet} 🪙!**`
-      : `**You lost ${bet} 🪙!**`;
-    description += `\n\nNew balance: **${newBalance} 🪙**`;
+    description += won ? `**<@${userId}> won ${bet} 🪙!**` : `**<@${userId}> lost ${bet} 🪙!**`;
 
-    const embed = new EmbedBuilder()
+    const resultEmbed = new EmbedBuilder()
       .setColor(won ? '#FFD700' : '#FF4444')
       .setTitle(won ? '🎉 Winner!' : '💀 Better luck next time!')
       .setDescription(description)
       .setTimestamp();
 
-    return interaction.reply({ embeds: [embed] });
+    await interaction.reply({ embeds: [resultEmbed] });
+
+    // Ephemeral balance reveal — only visible to the player
+    await interaction.followUp({
+      content: `Your new balance: **${newBalance} 🪙**`,
+      ephemeral: true,
+    });
   },
 };
