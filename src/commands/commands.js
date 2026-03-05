@@ -41,6 +41,13 @@ module.exports = {
           name: '🕐 Timezone',
           value: '`/th-timezone set` — Register your timezone for scheduled queue times',
         },
+        {
+          name: '🎲 Fun',
+          value: [
+            '`/th-flip` — Flip a coin',
+            '`/th-roll` — Roll a dice (default 6 sides, up to 1000)',
+          ].join('\n'),
+        },
       )
       .setFooter({ text: 'Only visible to you' });
 
