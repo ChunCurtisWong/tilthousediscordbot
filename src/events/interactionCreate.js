@@ -126,11 +126,11 @@ module.exports = {
 
     // ── Modal submits ─────────────────────────────────────────────────
     if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('q:game_modal')) {
+      if (interaction.customId.startsWith('q:other_modal')) {
         const queueCmd = interaction.client.commands.get('th-queue');
         try {
-          logger.info('Modal: game name', { userId: interaction.user.id });
-          await queueCmd.handleGameModal(interaction);
+          logger.info('Modal: other game name', { userId: interaction.user.id });
+          await queueCmd.handleOtherModal(interaction);
         } catch (err) {
           logger.error('Modal interaction error', {
             customId: interaction.customId,

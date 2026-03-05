@@ -17,11 +17,15 @@ const GAMES = [
 
 // ─── UI builders ─────────────────────────────────────────────────────────────
 
-/** Dropdown of hardcoded games + "Other" — used for queue creation. */
-function buildGameSelectRow() {
+/**
+ * Dropdown of hardcoded games + "Other" — used for queue creation.
+ * Params are encoded into the customId so they survive the select interaction:
+ *   q:game_select|<timeStr>|<minRaw>|<maxRaw>
+ */
+function buildGameSelectRow(timeStr = '', minRaw = '', maxRaw = '') {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId('q:game_select')
+      .setCustomId(`q:game_select|${timeStr}|${minRaw}|${maxRaw}`)
       .setPlaceholder('Choose a game…')
       .addOptions([
         ...GAMES.map(g => new StringSelectMenuOptionBuilder().setLabel(g).setValue(g)),
@@ -97,16 +101,15 @@ function buildClearAllConfirmRow() {
 }
 
 /**
- * Builds the queue setup modal shown after a game is selected.
- * customId encodes the chosen game: "q:game_modal|<game>"
- * For "Other", an extra Game Name field is prepended.
+ * Minimal modal shown only when the user selects "Other" from the game dropdown.
+ * Asks only for the game name — time/min/max are already encoded in the customId.
+ * customId format: "q:other_modal|<timeStr>|<minRaw>|<maxRaw>"
  */
-function buildQueueModal(game) {
-  const isOther = game === '__other__';
-  const rows = [];
-
-  if (isOther) {
-    rows.push(
+function buildOtherGameModal(timeStr, minRaw, maxRaw) {
+  return new ModalBuilder()
+    .setCustomId(`q:other_modal|${timeStr}|${minRaw}|${maxRaw}`)
+    .setTitle('Custom Game Queue')
+    .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId('game_name')
@@ -117,43 +120,6 @@ function buildQueueModal(game) {
           .setMaxLength(100)
       )
     );
-  }
-
-  rows.push(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('time')
-        .setLabel('Scheduled Time (optional)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('7pm · 7:30pm · 2024-06-15T18:00:00Z · Unix timestamp')
-        .setRequired(false)
-        .setMaxLength(50)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('min_players')
-        .setLabel('Min Players (optional)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Ping everyone when this many have joined')
-        .setRequired(false)
-        .setMaxLength(3)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('max_players')
-        .setLabel('Max Players (optional)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Close queue and ping everyone when full')
-        .setRequired(false)
-        .setMaxLength(3)
-    )
-  );
-
-  const title = isOther ? 'Queue Setup' : `${game.slice(0, 38)} Queue`;
-  return new ModalBuilder()
-    .setCustomId(`q:game_modal|${game}`)
-    .setTitle(title)
-    .addComponents(...rows);
 }
 
 /**
@@ -467,6 +433,28 @@ module.exports = {
       sub
         .setName('create')
         .setDescription('Create a new game queue')
+        .addStringOption(opt =>
+          opt
+            .setName('time')
+            .setDescription('Scheduled start time (e.g. 7pm, 7:30pm, 19:00)')
+            .setRequired(false)
+        )
+        .addIntegerOption(opt =>
+          opt
+            .setName('min_players')
+            .setDescription('Ping everyone when this many players have joined')
+            .setMinValue(2)
+            .setMaxValue(100)
+            .setRequired(false)
+        )
+        .addIntegerOption(opt =>
+          opt
+            .setName('max_players')
+            .setDescription('Lock the queue and ping everyone when full')
+            .setMinValue(2)
+            .setMaxValue(100)
+            .setRequired(false)
+        )
     )
     .addSubcommand(sub =>
       sub
@@ -502,11 +490,41 @@ module.exports = {
     logger.info(`Command: /th-queue ${sub}`, { userId, username });
 
     // ── /th-queue create ─────────────────────────────────────────────
-    // Primary queue creation flow: game dropdown → modal → new queue embed
+    // Game dropdown → (optional Other modal) → queue embed
     if (sub === 'create') {
+      const timeStr  = interaction.options.getString('time')?.trim() ?? '';
+      const minOpt   = interaction.options.getInteger('min_players') ?? null;
+      const maxOpt   = interaction.options.getInteger('max_players') ?? null;
+
+      // Validate time up-front so the user gets immediate feedback
+      if (timeStr) {
+        const ts = parseTime(timeStr);
+        if (!ts) {
+          return interaction.reply({
+            content:
+              '❌ Could not parse the time. Try formats like:\n' +
+              '`7pm`  `7:30pm`  `19:00`  `2024-06-15T18:00:00Z`  `1718474400`',
+            ephemeral: true,
+          });
+        }
+        if (ts <= Math.floor(Date.now() / 1000)) {
+          return interaction.reply({
+            content: '❌ The scheduled time must be in the future.',
+            ephemeral: true,
+          });
+        }
+      }
+
+      if (minOpt !== null && maxOpt !== null && minOpt >= maxOpt) {
+        return interaction.reply({
+          content: '❌ `min_players` must be less than `max_players`.',
+          ephemeral: true,
+        });
+      }
+
       return interaction.reply({
         content: '🎮 Choose a game to create a queue for:',
-        components: [buildGameSelectRow()],
+        components: [buildGameSelectRow(timeStr, minOpt ?? '', maxOpt ?? '')],
         ephemeral: true,
       });
     }
@@ -680,37 +698,41 @@ module.exports = {
     }
   },
 
-  // ── Game select menu (creation flow): show the queue setup modal ──
+  // ── Game select menu (creation flow) ─────────────────────────────
+  // Params encoded in the customId as: q:game_select|<timeStr>|<minRaw>|<maxRaw>
+  // For "Other", shows a minimal modal asking only for the game name.
   async handleGameSelect(interaction) {
-    return interaction.showModal(buildQueueModal(interaction.values[0]));
+    const [, timeStr = '', minRaw = '', maxRaw = ''] = interaction.customId.split('|');
+    const game = interaction.values[0];
+
+    if (game === '__other__') {
+      return interaction.showModal(buildOtherGameModal(timeStr, minRaw, maxRaw));
+    }
+
+    const minOpt = minRaw !== '' ? parseInt(minRaw, 10) : null;
+    const maxOpt = maxRaw !== '' ? parseInt(maxRaw, 10) : null;
+
+    await interaction.deferUpdate();
+    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+      timeStr: timeStr || null,
+      minOpt,
+      maxOpt,
+    });
   },
 
-  // ── Queue setup modal submitted (creation flow) ────────────────────
-  async handleGameModal(interaction) {
-    const [, gameFromId] = interaction.customId.split('|');
-
-    const game = gameFromId === '__other__'
-      ? interaction.fields.getTextInputValue('game_name').trim()
-      : gameFromId;
-
-    const rawTime = interaction.fields.getTextInputValue('time').trim();
-    const rawMin  = interaction.fields.getTextInputValue('min_players').trim();
-    const rawMax  = interaction.fields.getTextInputValue('max_players').trim();
-
-    const timeStr = rawTime || null;
-    const minOpt  = rawMin  ? parseInt(rawMin,  10) : null;
-    const maxOpt  = rawMax  ? parseInt(rawMax,  10) : null;
-
-    if (rawMin && (isNaN(minOpt) || minOpt < 2 || minOpt > 100)) {
-      return interaction.reply({ content: '❌ Min players must be a number between 2 and 100.', ephemeral: true });
-    }
-    if (rawMax && (isNaN(maxOpt) || maxOpt < 2 || maxOpt > 100)) {
-      return interaction.reply({ content: '❌ Max players must be a number between 2 and 100.', ephemeral: true });
-    }
+  // ── "Other" game name modal submitted ─────────────────────────────
+  // customId: q:other_modal|<timeStr>|<minRaw>|<maxRaw>
+  async handleOtherModal(interaction) {
+    const [, timeStr = '', minRaw = '', maxRaw = ''] = interaction.customId.split('|');
+    const game = interaction.fields.getTextInputValue('game_name').trim();
+    const minOpt = minRaw !== '' ? parseInt(minRaw, 10) : null;
+    const maxOpt = maxRaw !== '' ? parseInt(maxRaw, 10) : null;
 
     await interaction.deferReply({ ephemeral: true });
     return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
-      timeStr, minOpt, maxOpt,
+      timeStr: timeStr || null,
+      minOpt,
+      maxOpt,
     });
   },
 
