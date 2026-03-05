@@ -85,6 +85,20 @@ function deleteQueue(game) {
   writeJSON('queues.json', queues);
 }
 
+// ─── List ──────────────────────────────────────────────────────────────────
+
+function getList() {
+  return readJSON('list.json').active || null;
+}
+
+function saveList(listData) {
+  writeJSON('list.json', { active: listData });
+}
+
+function deleteList() {
+  writeJSON('list.json', {});
+}
+
 // ─── Schedules ─────────────────────────────────────────────────────────────
 
 function getSchedules() {
@@ -117,6 +131,9 @@ module.exports = {
   getQueue,
   saveQueue,
   deleteQueue,
+  getList,
+  saveList,
+  deleteList,
   getSchedules,
   getSchedule,
   saveSchedule,

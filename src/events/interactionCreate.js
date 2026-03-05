@@ -1,8 +1,25 @@
 const logger = require('../utils/logger');
 
+// Shared error-reply helper for interaction handlers
+async function safeError(interaction, err, label) {
+  logger.error(label, {
+    customId: interaction.customId,
+    error: err.message,
+    stack: err.stack,
+    userId: interaction.user.id,
+  });
+  const msg = { content: '❌ An error occurred.', ephemeral: true };
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp(msg).catch(() => {});
+  } else {
+    await interaction.reply(msg).catch(() => {});
+  }
+}
+
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
+
     // ── Slash commands ──────────────────────────────────────────────
     if (interaction.isChatInputCommand()) {
       const command = interaction.client.commands.get(interaction.commandName);
@@ -33,7 +50,6 @@ module.exports = {
           userId: interaction.user.id,
           guildId: interaction.guildId,
         });
-
         const errorMsg = { content: '❌ An error occurred while executing this command.', ephemeral: true };
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp(errorMsg).catch(() => {});
@@ -44,36 +60,55 @@ module.exports = {
       return;
     }
 
-    // ── Queue buttons ────────────────────────────────────────────────
+    // ── Buttons ──────────────────────────────────────────────────────
     if (interaction.isButton()) {
       const { customId } = interaction;
-      const queueCmd = interaction.client.commands.get('th-queue');
+
       try {
-        if (customId.startsWith('q:join:') && queueCmd?.handleButtonJoin) {
-          const game = customId.slice('q:join:'.length);
-          logger.info('Button: queue join', { game, userId: interaction.user.id });
-          await queueCmd.handleButtonJoin(interaction, game);
-        } else if (customId.startsWith('q:leave:') && queueCmd?.handleButtonLeave) {
-          const game = customId.slice('q:leave:'.length);
-          logger.info('Button: queue leave', { game, userId: interaction.user.id });
-          await queueCmd.handleButtonLeave(interaction, game);
-        } else if (customId.startsWith('q:clear_all:') && queueCmd?.handleClearAllButton) {
-          logger.info('Button: clear-all confirm', { customId, userId: interaction.user.id });
-          await queueCmd.handleClearAllButton(interaction);
+        // Queue buttons
+        if (customId.startsWith('q:')) {
+          const queueCmd = interaction.client.commands.get('th-queue');
+          if (customId.startsWith('q:join:')) {
+            const game = customId.slice('q:join:'.length);
+            logger.info('Button: queue join', { game, userId: interaction.user.id });
+            await queueCmd.handleButtonJoin(interaction, game);
+          } else if (customId.startsWith('q:leave:')) {
+            const game = customId.slice('q:leave:'.length);
+            logger.info('Button: queue leave', { game, userId: interaction.user.id });
+            await queueCmd.handleButtonLeave(interaction, game);
+          } else if (customId.startsWith('q:clear_all:')) {
+            logger.info('Button: queue clear-all confirm', { customId, userId: interaction.user.id });
+            await queueCmd.handleClearAllButton(interaction);
+          }
+
+        // List buttons
+        } else if (customId.startsWith('l:')) {
+          const listCmd = interaction.client.commands.get('th-list');
+          if (customId === 'l:join') {
+            logger.info('Button: list join', { userId: interaction.user.id });
+            await listCmd.handleJoin(interaction);
+          } else if (customId === 'l:leave') {
+            logger.info('Button: list leave', { userId: interaction.user.id });
+            await listCmd.handleLeave(interaction);
+          } else if (customId === 'l:clear:yes') {
+            logger.info('Button: list clear confirm', { userId: interaction.user.id });
+            await listCmd.handleClearConfirm(interaction);
+          } else if (customId === 'l:clear:no') {
+            logger.info('Button: list clear cancel', { userId: interaction.user.id });
+            await listCmd.handleClearCancel(interaction);
+          } else if (customId.startsWith('l:rnd:rm:')) {
+            const pickedUserId = customId.slice('l:rnd:rm:'.length);
+            logger.info('Button: random remove', { pickedUserId, userId: interaction.user.id });
+            const randomCmd = interaction.client.commands.get('th-random');
+            await randomCmd.handleRemove(interaction, pickedUserId);
+          } else if (customId === 'l:rnd:keep') {
+            logger.info('Button: random keep', { userId: interaction.user.id });
+            const randomCmd = interaction.client.commands.get('th-random');
+            await randomCmd.handleKeep(interaction);
+          }
         }
       } catch (err) {
-        logger.error('Button interaction error', {
-          customId,
-          error: err.message,
-          stack: err.stack,
-          userId: interaction.user.id,
-        });
-        const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(errorMsg).catch(() => {});
-        } else {
-          await interaction.reply(errorMsg).catch(() => {});
-        }
+        await safeError(interaction, err, 'Button interaction error');
       }
       return;
     }
@@ -81,42 +116,61 @@ module.exports = {
     // ── Select menus ─────────────────────────────────────────────────
     if (interaction.isStringSelectMenu()) {
       const { customId } = interaction;
-      const queueCmd = interaction.client.commands.get('th-queue');
       let handler = null;
       let logLabel = null;
+      let cmd = null;
 
+      // Queue select menus
       if (customId === 'q:join_select') {
-        handler = queueCmd?.handleJoinSelect;
+        cmd = interaction.client.commands.get('th-queue');
+        handler = cmd?.handleJoinSelect;
         logLabel = 'Select: queue join';
       } else if (customId === 'q:leave_select') {
-        handler = queueCmd?.handleLeaveSelect;
+        cmd = interaction.client.commands.get('th-queue');
+        handler = cmd?.handleLeaveSelect;
         logLabel = 'Select: queue leave';
       } else if (customId === 'q:status_select') {
-        handler = queueCmd?.handleStatusSelect;
+        cmd = interaction.client.commands.get('th-queue');
+        handler = cmd?.handleStatusSelect;
         logLabel = 'Select: queue status';
       } else if (customId === 'q:clear_select') {
-        handler = queueCmd?.handleClearSelect;
+        cmd = interaction.client.commands.get('th-queue');
+        handler = cmd?.handleClearSelect;
         logLabel = 'Select: queue clear';
+      // Teams select menus
+      } else if (customId === 't:split_select') {
+        cmd = interaction.client.commands.get('th-teams');
+        handler = cmd?.handleSplitSelect;
+        logLabel = 'Select: teams split method';
       }
 
       if (handler) {
         try {
           logger.info(logLabel, { customId, userId: interaction.user.id });
-          await handler.call(queueCmd, interaction);
+          await handler.call(cmd, interaction);
         } catch (err) {
-          logger.error('Select interaction error', {
-            customId,
-            error: err.message,
-            stack: err.stack,
-            userId: interaction.user.id,
-          });
-          const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
-          if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(errorMsg).catch(() => {});
-          } else {
-            await interaction.reply(errorMsg).catch(() => {});
-          }
+          await safeError(interaction, err, 'Select interaction error');
         }
+      }
+      return;
+    }
+
+    // ── Modal submits ─────────────────────────────────────────────────
+    if (interaction.isModalSubmit()) {
+      const { customId } = interaction;
+      try {
+        if (customId === 't:size_modal') {
+          logger.info('Modal: teams size', { userId: interaction.user.id });
+          await interaction.client.commands.get('th-teams').handleSizeModal(interaction);
+        } else if (customId === 't:count_modal') {
+          logger.info('Modal: teams count', { userId: interaction.user.id });
+          await interaction.client.commands.get('th-teams').handleCountModal(interaction);
+        } else if (customId === 't:custom_modal') {
+          logger.info('Modal: teams custom', { userId: interaction.user.id });
+          await interaction.client.commands.get('th-teams').handleCustomModal(interaction);
+        }
+      } catch (err) {
+        await safeError(interaction, err, 'Modal interaction error');
       }
       return;
     }
