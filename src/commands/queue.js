@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
@@ -16,26 +16,6 @@ const GAMES = [
 ];
 
 // ─── UI builders ─────────────────────────────────────────────────────────────
-
-/**
- * Dropdown of hardcoded games + "Other" — used for queue creation.
- * Params are encoded into the customId so they survive the select interaction:
- *   q:game_select|<timeStr>|<minRaw>|<maxRaw>
- */
-function buildGameSelectRow(timeStr = '', minRaw = '', maxRaw = '') {
-  return new ActionRowBuilder().addComponents(
-    new StringSelectMenuBuilder()
-      .setCustomId(`q:game_select|${timeStr}|${minRaw}|${maxRaw}`)
-      .setPlaceholder('Choose a game…')
-      .addOptions([
-        ...GAMES.map(g => new StringSelectMenuOptionBuilder().setLabel(g).setValue(g)),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Other')
-          .setValue('__other__')
-          .setDescription('Type a custom game name'),
-      ])
-  );
-}
 
 /** Dropdown of currently active queues — used for joining an existing queue. */
 function buildActiveQueueSelectRow(queues) {
@@ -98,28 +78,6 @@ function buildClearAllConfirmRow() {
       .setStyle(ButtonStyle.Secondary)
       .setEmoji('✖️'),
   );
-}
-
-/**
- * Minimal modal shown only when the user selects "Other" from the game dropdown.
- * Asks only for the game name — time/min/max are already encoded in the customId.
- * customId format: "q:other_modal|<timeStr>|<minRaw>|<maxRaw>"
- */
-function buildOtherGameModal(timeStr, minRaw, maxRaw) {
-  return new ModalBuilder()
-    .setCustomId(`q:other_modal|${timeStr}|${minRaw}|${maxRaw}`)
-    .setTitle('Custom Game Queue')
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('game_name')
-          .setLabel('Game Name')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('e.g. Apex Legends')
-          .setRequired(true)
-          .setMaxLength(100)
-      )
-    );
 }
 
 /**
@@ -435,6 +393,13 @@ module.exports = {
         .setDescription('Create a new game queue')
         .addStringOption(opt =>
           opt
+            .setName('game')
+            .setDescription('Game to queue for')
+            .setRequired(true)
+            .setAutocomplete(true)
+        )
+        .addStringOption(opt =>
+          opt
             .setName('time')
             .setDescription('Scheduled start time (e.g. 7pm, 7:30pm, 19:00)')
             .setRequired(false)
@@ -490,13 +455,12 @@ module.exports = {
     logger.info(`Command: /th-queue ${sub}`, { userId, username });
 
     // ── /th-queue create ─────────────────────────────────────────────
-    // Game dropdown → (optional Other modal) → queue embed
     if (sub === 'create') {
-      const timeStr  = interaction.options.getString('time')?.trim() ?? '';
-      const minOpt   = interaction.options.getInteger('min_players') ?? null;
-      const maxOpt   = interaction.options.getInteger('max_players') ?? null;
+      const game    = interaction.options.getString('game').trim();
+      const timeStr = interaction.options.getString('time')?.trim() ?? '';
+      const minOpt  = interaction.options.getInteger('min_players') ?? null;
+      const maxOpt  = interaction.options.getInteger('max_players') ?? null;
 
-      // Validate time up-front so the user gets immediate feedback
       if (timeStr) {
         const ts = parseTime(timeStr);
         if (!ts) {
@@ -522,10 +486,11 @@ module.exports = {
         });
       }
 
-      return interaction.reply({
-        content: '🎮 Choose a game to create a queue for:',
-        components: [buildGameSelectRow(timeStr, minOpt ?? '', maxOpt ?? '')],
-        ephemeral: true,
+      await interaction.deferReply({ ephemeral: true });
+      return processJoin(interaction, game, userId, username, {
+        timeStr: timeStr || null,
+        minOpt,
+        maxOpt,
       });
     }
 
@@ -698,42 +663,13 @@ module.exports = {
     }
   },
 
-  // ── Game select menu (creation flow) ─────────────────────────────
-  // Params encoded in the customId as: q:game_select|<timeStr>|<minRaw>|<maxRaw>
-  // For "Other", shows a minimal modal asking only for the game name.
-  async handleGameSelect(interaction) {
-    const [, timeStr = '', minRaw = '', maxRaw = ''] = interaction.customId.split('|');
-    const game = interaction.values[0];
-
-    if (game === '__other__') {
-      return interaction.showModal(buildOtherGameModal(timeStr, minRaw, maxRaw));
-    }
-
-    const minOpt = minRaw !== '' ? parseInt(minRaw, 10) : null;
-    const maxOpt = maxRaw !== '' ? parseInt(maxRaw, 10) : null;
-
-    await interaction.deferUpdate();
-    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
-      timeStr: timeStr || null,
-      minOpt,
-      maxOpt,
-    });
-  },
-
-  // ── "Other" game name modal submitted ─────────────────────────────
-  // customId: q:other_modal|<timeStr>|<minRaw>|<maxRaw>
-  async handleOtherModal(interaction) {
-    const [, timeStr = '', minRaw = '', maxRaw = ''] = interaction.customId.split('|');
-    const game = interaction.fields.getTextInputValue('game_name').trim();
-    const minOpt = minRaw !== '' ? parseInt(minRaw, 10) : null;
-    const maxOpt = maxRaw !== '' ? parseInt(maxRaw, 10) : null;
-
-    await interaction.deferReply({ ephemeral: true });
-    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
-      timeStr: timeStr || null,
-      minOpt,
-      maxOpt,
-    });
+  // ── Autocomplete for /th-queue create game: ───────────────────────
+  autocomplete(interaction) {
+    const focused = interaction.options.getFocused().toLowerCase();
+    const suggestions = [...GAMES, 'Other']
+      .filter(g => g.toLowerCase().includes(focused))
+      .map(g => ({ name: g, value: g }));
+    return interaction.respond(suggestions);
   },
 
   // ── Join select menu: user picked an active queue to join ──────────

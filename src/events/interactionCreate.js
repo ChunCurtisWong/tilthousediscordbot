@@ -85,10 +85,7 @@ module.exports = {
       let handler = null;
       let logLabel = null;
 
-      if (customId.startsWith('q:game_select')) {
-        handler = queueCmd?.handleGameSelect;
-        logLabel = 'Select: game pick';
-      } else if (customId === 'q:join_select') {
+      if (customId === 'q:join_select') {
         handler = queueCmd?.handleJoinSelect;
         logLabel = 'Select: queue join';
       } else if (customId === 'q:leave_select') {
@@ -109,31 +106,6 @@ module.exports = {
         } catch (err) {
           logger.error('Select interaction error', {
             customId,
-            error: err.message,
-            stack: err.stack,
-            userId: interaction.user.id,
-          });
-          const errorMsg = { content: '❌ An error occurred.', ephemeral: true };
-          if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(errorMsg).catch(() => {});
-          } else {
-            await interaction.reply(errorMsg).catch(() => {});
-          }
-        }
-      }
-      return;
-    }
-
-    // ── Modal submits ─────────────────────────────────────────────────
-    if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('q:other_modal')) {
-        const queueCmd = interaction.client.commands.get('th-queue');
-        try {
-          logger.info('Modal: other game name', { userId: interaction.user.id });
-          await queueCmd.handleOtherModal(interaction);
-        } catch (err) {
-          logger.error('Modal interaction error', {
-            customId: interaction.customId,
             error: err.message,
             stack: err.stack,
             userId: interaction.user.id,
