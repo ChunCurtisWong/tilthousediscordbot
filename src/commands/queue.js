@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
@@ -15,8 +15,9 @@ const GAMES = [
   'MW2 (Michael Myers)',
 ];
 
-// ─── Game select + queue setup modal ─────────────────────────────────────────
+// ─── UI builders ─────────────────────────────────────────────────────────────
 
+/** Dropdown of hardcoded games + "Other" — used for queue creation. */
 function buildGameSelectRow() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -29,6 +30,69 @@ function buildGameSelectRow() {
           .setValue('__other__')
           .setDescription('Type a custom game name'),
       ])
+  );
+}
+
+/** Dropdown of currently active queues — used for joining an existing queue. */
+function buildActiveQueueSelectRow(queues) {
+  const options = Object.entries(queues)
+    .slice(0, 25)
+    .map(([name, q]) => {
+      const count = q.players?.length ?? 0;
+      const fill = q.fill?.length ?? 0;
+      let desc = `${count} player${count !== 1 ? 's' : ''}`;
+      if (fill > 0) desc += `, ${fill} on fill`;
+      if (q.scheduledTime) {
+        const secsLeft = q.scheduledTime - Math.floor(Date.now() / 1000);
+        if (secsLeft > 0) {
+          const h = Math.floor(secsLeft / 3600);
+          const m = Math.ceil((secsLeft % 3600) / 60);
+          desc += h > 0 ? ` · in ${h}h ${m}m` : ` · in ${m}m`;
+        }
+      }
+      return new StringSelectMenuOptionBuilder()
+        .setLabel(name.slice(0, 100))
+        .setValue(name.slice(0, 100))
+        .setDescription(desc.slice(0, 100));
+    });
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('q:join_select')
+      .setPlaceholder('Choose a queue to join…')
+      .addOptions(options)
+  );
+}
+
+/** Dropdown of queues the user is currently in — used for smart leave. */
+function buildUserQueueSelectRow(gameNames) {
+  const options = gameNames.slice(0, 25).map(name =>
+    new StringSelectMenuOptionBuilder()
+      .setLabel(name.slice(0, 100))
+      .setValue(name.slice(0, 100))
+  );
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('q:leave_select')
+      .setPlaceholder('Choose a queue to leave…')
+      .addOptions(options)
+  );
+}
+
+/** Yes / Cancel buttons for /th-queue clear-all confirmation. */
+function buildClearAllConfirmRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('q:clear_all:yes')
+      .setLabel('Yes, clear all')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🗑️'),
+    new ButtonBuilder()
+      .setCustomId('q:clear_all:no')
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('✖️'),
   );
 }
 
@@ -138,12 +202,8 @@ function parseTime(timeStr) {
  *
  *  - Not deferred (slash command)  → reply({ ephemeral: true })
  *  - Button (deferred via deferUpdate) → followUp({ ephemeral: true })
- *    The queue embed was already updated via editReply; this sends a
- *    separate ephemeral so the button message itself stays intact.
  *  - Select menu or modal (deferred via deferUpdate / deferReply)
  *    → editReply({ components: [] })
- *    Updates the ephemeral interaction message in-place, removing the
- *    dropdown or filling the deferred reply with the confirmation text.
  */
 function respond(interaction, opts) {
   if (!interaction.deferred) {
@@ -152,15 +212,13 @@ function respond(interaction, opts) {
   if (interaction.isButton()) {
     return interaction.followUp({ ...opts, ephemeral: true });
   }
-  // Select menu (deferUpdate) or modal (deferReply): update the ephemeral in-place
   return interaction.editReply({ ...opts, components: [] });
 }
 
 /**
  * Updates the live queue embed with the current state.
  *
- * Button path  → interaction.editReply() edits the message the button lives on
- *               in-place, with no new message posted.
+ * Button path  → interaction.editReply() edits the message the button lives on.
  * Slash path   → edits the stored embed message by ID, or posts a new one
  *               if the original was deleted.
  */
@@ -169,15 +227,12 @@ async function refreshEmbed(interaction, game, queueData) {
   const components = [buildQueueComponents(game)];
 
   if (interaction.isButton()) {
-    // editReply targets the exact message the button was on
     await interaction.editReply({ embeds: [embed], components });
-    // Keep stored IDs in sync (they should already match)
     queueData.messageId = interaction.message.id;
     queueData.channelId = interaction.channelId;
     return;
   }
 
-  // Slash command: edit the stored embed message, or post a fresh one
   if (queueData.messageId && queueData.channelId) {
     try {
       const ch = await interaction.client.channels.fetch(queueData.channelId);
@@ -189,9 +244,10 @@ async function refreshEmbed(interaction, game, queueData) {
     }
   }
 
-  const msg = await interaction.channel.send({ embeds: [embed], components });
+  const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
+  const msg = await channel.send({ embeds: [embed], components });
   queueData.messageId = msg.id;
-  queueData.channelId = interaction.channel.id;
+  queueData.channelId = channel.id;
 }
 
 // ─── Shared join logic ──────────────────────────────────────────────────────
@@ -236,8 +292,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   // ── Queue full → add to fill list ────────────────────────────────
   if (max !== null && queueData.players.length >= max) {
     queueData.fill.push({ userId, username, joinedAt: Date.now() });
-    await refreshEmbed(interaction, game, queueData);
     storage.saveQueue(game, queueData);
+    await refreshEmbed(interaction, game, queueData);
 
     const pos = queueData.fill.length;
     logger.info('Player added to fill list', { userId, game, fillPosition: pos });
@@ -250,8 +306,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
   // ── Add to main queue ────────────────────────────────────────────
   queueData.players.push({ userId, username, joinedAt: Date.now() });
-  await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
+  await refreshEmbed(interaction, game, queueData);
 
   const count = queueData.players.length;
 
@@ -303,20 +359,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       embeds: [readyEmbed],
     });
   }
-
-  // ── Scheduled within 10 min: ping immediately ─────────────────────
-  if (scheduledTime && !queueData.reminderSent) {
-    const secsUntil = scheduledTime - Math.floor(Date.now() / 1000);
-    if (secsUntil <= 600 && secsUntil > 0) {
-      queueData.reminderSent = true;
-      storage.saveQueue(game, queueData);
-      const minutesLeft = Math.max(1, Math.ceil(secsUntil / 60));
-      logger.info('Queue scheduled within 10 min — pinging immediately', { game, minutesLeft });
-      await channel.send({
-        content: `${pingList}\n⏰ **${game}** starts in **${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}**! <t:${scheduledTime}:R>`,
-      });
-    }
-  }
+  // Note: 10-minute reminder pings are handled exclusively by reminders.js
+  // to avoid duplicate pings from concurrent code paths.
 }
 
 // ─── Shared leave logic ─────────────────────────────────────────────────────
@@ -351,15 +395,15 @@ async function processLeave(interaction, game, userId) {
         fillRemaining: queueData.fill.length,
       });
 
-      await refreshEmbed(interaction, game, queueData);
       storage.saveQueue(game, queueData);
+      await refreshEmbed(interaction, game, queueData);
 
       await channel.send({
         content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
       });
     } else {
-      await refreshEmbed(interaction, game, queueData);
       storage.saveQueue(game, queueData);
+      await refreshEmbed(interaction, game, queueData);
       logger.info('Player left main queue', { userId, game, remaining: queueData.players.length });
     }
 
@@ -368,8 +412,8 @@ async function processLeave(interaction, game, userId) {
 
   // ── Leaving fill list ────────────────────────────────────────────
   queueData.fill.splice(fillIdx, 1);
-  await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
+  await refreshEmbed(interaction, game, queueData);
 
   logger.info('Player left fill list', { userId, game, fillRemaining: queueData.fill.length });
   return respond(interaction, { content: `✅ You've been removed from the **${game}** fill list.` });
@@ -421,16 +465,18 @@ module.exports = {
     .setDescription('Manage game queues')
     .addSubcommand(sub =>
       sub
+        .setName('create')
+        .setDescription('Create a new game queue')
+    )
+    .addSubcommand(sub =>
+      sub
         .setName('join')
-        .setDescription('Join a game queue')
+        .setDescription('Join an existing active queue')
     )
     .addSubcommand(sub =>
       sub
         .setName('leave')
-        .setDescription('Leave a game queue or fill list')
-        .addStringOption(opt =>
-          opt.setName('game').setDescription('Game name to leave').setRequired(true)
-        )
+        .setDescription('Leave a queue or fill list you are in')
     )
     .addSubcommand(sub =>
       sub
@@ -444,30 +490,86 @@ module.exports = {
       sub
         .setName('clear')
         .setDescription('Clear a game queue (host or moderator only)')
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('clear-all')
+        .setDescription('Clear all active queues (moderator only)')
     ),
 
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
-    const game = interaction.options.getString('game')?.trim() ?? '';
     const userId = interaction.user.id;
     const username = interaction.user.username;
 
-    logger.info(`Command: /th-queue ${sub}`, { userId, username, game });
+    logger.info(`Command: /th-queue ${sub}`, { userId, username });
 
-    if (sub === 'join') {
+    // ── /th-queue create ─────────────────────────────────────────────
+    // Primary queue creation flow: game dropdown → modal → new queue embed
+    if (sub === 'create') {
       return interaction.reply({
-        content: '🎮 Choose a game to queue for:',
+        content: '🎮 Choose a game to create a queue for:',
         components: [buildGameSelectRow()],
         ephemeral: true,
       });
     }
 
+    // ── /th-queue join ───────────────────────────────────────────────
+    // Shows dropdown of currently active queues to join
+    if (sub === 'join') {
+      const queues = storage.getQueues();
+      const activeQueues = Object.fromEntries(
+        Object.entries(queues).filter(([, q]) => q.players || q.fill)
+      );
+
+      if (Object.keys(activeQueues).length === 0) {
+        return interaction.reply({
+          content: '❌ There are no active queues to join. Use `/th-queue create` to start one!',
+          ephemeral: true,
+        });
+      }
+
+      return interaction.reply({
+        content: '🎮 Choose a queue to join:',
+        components: [buildActiveQueueSelectRow(activeQueues)],
+        ephemeral: true,
+      });
+    }
+
+    // ── /th-queue leave ──────────────────────────────────────────────
+    // Smart leave: immediate if in 1 queue, dropdown if in multiple
     if (sub === 'leave') {
-      return processLeave(interaction, game, userId);
+      const queues = storage.getQueues();
+      const userQueues = Object.keys(queues).filter(game => {
+        const q = queues[game];
+        return (
+          q.players?.some(p => p.userId === userId) ||
+          q.fill?.some(p => p.userId === userId)
+        );
+      });
+
+      if (userQueues.length === 0) {
+        return interaction.reply({
+          content: '❌ You are not in any active queue.',
+          ephemeral: true,
+        });
+      }
+
+      if (userQueues.length === 1) {
+        await interaction.deferReply({ ephemeral: true });
+        return processLeave(interaction, userQueues[0], userId);
+      }
+
+      return interaction.reply({
+        content: '🚪 You are in multiple queues. Which one do you want to leave?',
+        components: [buildUserQueueSelectRow(userQueues)],
+        ephemeral: true,
+      });
     }
 
     // ── /th-queue status ─────────────────────────────────────────────
     if (sub === 'status') {
+      const game = interaction.options.getString('game')?.trim() ?? '';
       const queueData = storage.getQueue(game);
       return interaction.reply({
         embeds: [buildQueueEmbed(game, queueData)],
@@ -480,7 +582,6 @@ module.exports = {
       const queues = storage.getQueues();
       const isMod = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
-      // Build list of queues this user is allowed to clear
       const clearable = Object.entries(queues).filter(([, q]) =>
         isMod || q.players?.[0]?.userId === userId
       );
@@ -522,24 +623,45 @@ module.exports = {
         ephemeral: true,
       });
     }
+
+    // ── /th-queue clear-all ──────────────────────────────────────────
+    if (sub === 'clear-all') {
+      const isMod = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
+      if (!isMod) {
+        return interaction.reply({
+          content: '❌ Only moderators (Manage Channels permission) can clear all queues.',
+          ephemeral: true,
+        });
+      }
+
+      const queues = storage.getQueues();
+      const count = Object.keys(queues).length;
+
+      if (count === 0) {
+        return interaction.reply({ content: '❌ There are no active queues to clear.', ephemeral: true });
+      }
+
+      return interaction.reply({
+        content: `⚠️ Are you sure you want to clear **all ${count} active queue${count !== 1 ? 's' : ''}**? This cannot be undone.`,
+        components: [buildClearAllConfirmRow()],
+        ephemeral: true,
+      });
+    }
   },
 
-  // ── Game select menu: show the queue setup modal for the chosen game ─
+  // ── Game select menu (creation flow): show the queue setup modal ──
   async handleGameSelect(interaction) {
-    // showModal() is a valid interaction response — no deferUpdate needed
     return interaction.showModal(buildQueueModal(interaction.values[0]));
   },
 
-  // ── Queue setup modal submitted ────────────────────────────────────
+  // ── Queue setup modal submitted (creation flow) ────────────────────
   async handleGameModal(interaction) {
     const [, gameFromId] = interaction.customId.split('|');
 
-    // "Other" path: game name comes from the modal text input
     const game = gameFromId === '__other__'
       ? interaction.fields.getTextInputValue('game_name').trim()
       : gameFromId;
 
-    // Read optional fields — getTextInputValue returns '' when left blank
     const rawTime = interaction.fields.getTextInputValue('time').trim();
     const rawMin  = interaction.fields.getTextInputValue('min_players').trim();
     const rawMax  = interaction.fields.getTextInputValue('max_players').trim();
@@ -561,16 +683,73 @@ module.exports = {
     });
   },
 
+  // ── Join select menu: user picked an active queue to join ──────────
+  async handleJoinSelect(interaction) {
+    await interaction.deferUpdate();
+    const game = interaction.values[0];
+    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+      minOpt: null,
+      maxOpt: null,
+      timeStr: null,
+    });
+  },
+
+  // ── Leave select menu: user picked which queue to leave ───────────
+  async handleLeaveSelect(interaction) {
+    await interaction.deferUpdate();
+    const game = interaction.values[0];
+    return processLeave(interaction, game, interaction.user.id);
+  },
+
+  // ── Clear-all confirmation buttons ────────────────────────────────
+  async handleClearAllButton(interaction) {
+    const choice = interaction.customId.split(':')[2]; // 'yes' or 'no'
+
+    if (choice === 'no') {
+      return interaction.update({ content: '❌ Cancelled.', components: [] });
+    }
+
+    // Yes: clear all queues
+    await interaction.deferUpdate();
+
+    const queues = storage.getQueues();
+    const gameNames = Object.keys(queues);
+    const userId = interaction.user.id;
+
+    logger.info('Clearing all queues', { userId, count: gameNames.length });
+
+    for (const game of gameNames) {
+      const q = queues[game];
+      if (q.messageId && q.channelId) {
+        try {
+          const ch = await interaction.client.channels.fetch(q.channelId);
+          const msg = await ch.messages.fetch(q.messageId);
+          const clearedEmbed = new EmbedBuilder()
+            .setColor('#FF6B6B')
+            .setTitle(`🚫 Queue Cleared: ${game}`)
+            .setDescription(`The **${game}** queue was cleared by <@${userId}>.`)
+            .setTimestamp();
+          await msg.edit({ embeds: [clearedEmbed], components: [] });
+        } catch (err) {
+          logger.warn('handleClearAllButton: could not edit queue embed', { game, error: err.message });
+        }
+      }
+      storage.deleteQueue(game);
+    }
+
+    const n = gameNames.length;
+    return interaction.editReply({
+      content: `✅ Cleared **${n}** queue${n !== 1 ? 's' : ''}.`,
+      components: [],
+    });
+  },
+
   // ── Clear select menu ──────────────────────────────────────────────
-  // Exported for select menu dispatch in interactionCreate.js.
   handleClearSelect(interaction) {
     return processClear(interaction, interaction.values[0], interaction.user.id);
   },
 
   // ── Queue embed buttons ────────────────────────────────────────────
-  // Exported for button interaction dispatch in interactionCreate.js.
-  // deferUpdate() is called first so Discord acknowledges the click instantly,
-  // then processJoin/Leave use editReply() to update the message in-place.
   async handleButtonJoin(interaction, game) {
     await interaction.deferUpdate();
     return processJoin(interaction, game, interaction.user.id, interaction.user.username, {

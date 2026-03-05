@@ -44,7 +44,7 @@ module.exports = {
       return;
     }
 
-    // ── Queue buttons (q:join:<game> / q:leave:<game>) ──────────────
+    // ── Queue buttons ────────────────────────────────────────────────
     if (interaction.isButton()) {
       const { customId } = interaction;
       const queueCmd = interaction.client.commands.get('th-queue');
@@ -57,6 +57,9 @@ module.exports = {
           const game = customId.slice('q:leave:'.length);
           logger.info('Button: queue leave', { game, userId: interaction.user.id });
           await queueCmd.handleButtonLeave(interaction, game);
+        } else if (customId.startsWith('q:clear_all:') && queueCmd?.handleClearAllButton) {
+          logger.info('Button: clear-all confirm', { customId, userId: interaction.user.id });
+          await queueCmd.handleClearAllButton(interaction);
         }
       } catch (err) {
         logger.error('Button interaction error', {
@@ -85,6 +88,12 @@ module.exports = {
       if (customId.startsWith('q:game_select')) {
         handler = queueCmd?.handleGameSelect;
         logLabel = 'Select: game pick';
+      } else if (customId === 'q:join_select') {
+        handler = queueCmd?.handleJoinSelect;
+        logLabel = 'Select: queue join';
+      } else if (customId === 'q:leave_select') {
+        handler = queueCmd?.handleLeaveSelect;
+        logLabel = 'Select: queue leave';
       } else if (customId === 'q:clear_select') {
         handler = queueCmd?.handleClearSelect;
         logLabel = 'Select: queue clear';
