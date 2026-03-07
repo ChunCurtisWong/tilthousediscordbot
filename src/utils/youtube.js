@@ -87,11 +87,7 @@ async function checkForNewVideo(client) {
       .setFooter({ text: 'YouTube Notifier' })
       .setTimestamp();
 
-    const pingContent = YOUTUBE_PING_ROLE
-      ? `<@&${YOUTUBE_PING_ROLE}> 🎬 New video just dropped!`
-      : '@here 🎬 New video just dropped!';
-
-    await discordChannel.send({ content: pingContent, embeds: [embed] });
+    await discordChannel.send({ embeds: [embed] });
 
     logger.info('YouTube: Notification posted', {
       videoId,
