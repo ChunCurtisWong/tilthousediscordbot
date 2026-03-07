@@ -2,7 +2,8 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
-const { payoutQueue, getNextDailyReset } = require('../utils/trinkets');
+const { payoutQueue } = require('../utils/trinkets');
+const { sendCloseNotification } = require('../utils/reminders');
 
 // ─── Game list ───────────────────────────────────────────────────────────────
 
@@ -235,6 +236,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
   // ── Add to main queue ────────────────────────────────────────────
   queueData.players.push({ userId, username, joinedAt: Date.now() });
+  queueData.lastActivityAt = Date.now(); // resets 3-hour inactivity timer
   storage.saveQueue(game, queueData);
   await refreshEmbed(interaction, game, queueData);
 
@@ -257,9 +259,6 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   if (max !== null && count >= max) {
     logger.info('Queue max reached', { game, count, max });
 
-    // Payout trinkets before deleting queue data
-    const { playerPayouts, fillPayouts, ineligible } = payoutQueue(queueData);
-
     const fullEmbed = new EmbedBuilder()
       .setColor('#FF6B6B')
       .setTitle(`🔒 Queue Full: ${game}`)
@@ -274,32 +273,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       embeds: [fullEmbed],
     });
 
-    // Public payout embed (eligible players only)
-    const payoutLines = [
-      ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
-      ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
-    ];
-    if (payoutLines.length > 0) {
-      const payoutEmbed = new EmbedBuilder()
-        .setColor('#FFD700')
-        .setTitle('🪙 Trinket Payout')
-        .setDescription(`Queue closed naturally — Trinkets awarded!\n\n${payoutLines.join('\n')}`);
-      await channel.send({ embeds: [payoutEmbed] });
-    }
-
-    // DM players who already hit their daily queue Trinket limit
-    const resetTs = Math.floor(getNextDailyReset() / 1000);
-    for (const p of ineligible) {
-      try {
-        const user = await interaction.client.users.fetch(p.userId);
-        await user.send(
-          `You joined the **${game}** queue but you've already earned your queue Trinkets for today. ` +
-            `They reset <t:${resetTs}:R> — join a queue after that to earn more! 🪙`
-        );
-      } catch {
-        // DMs may be disabled — silently skip
-      }
-    }
+    const payoutResult = payoutQueue(queueData);
+    await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult);
 
     storage.deleteQueue(game);
     return;

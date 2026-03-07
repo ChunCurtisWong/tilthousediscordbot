@@ -208,14 +208,32 @@ function deletePendingBet(betId) {
 // ─── Queue payout ─────────────────────────────────────────────────────────────
 
 /**
- * Awards Trinkets for a naturally-closed queue (max reached or time expired).
- * Players who already received queue Trinkets since the last 7pm ET reset
- * are skipped. Returns { playerPayouts, fillPayouts, ineligible }.
+ * Awards Trinkets for a naturally-closed queue.
  *
- * playerPayouts / fillPayouts: [{ userId, username, amount }] — received Trinkets
- * ineligible:                  [{ userId, username }]         — daily limit hit
+ * Payout requirements (returns { ok: false, reason, ... } if not met):
+ *  - At least 2 players must be in the main queue.
+ *  - If a minimum was set, it must be met.
+ *
+ * For eligible players the daily 7pm ET limit is enforced.
+ * Returns { ok: true, playerPayouts, fillPayouts, ineligible } on success.
+ * playerPayouts / fillPayouts: [{ userId, username, amount }]
+ * ineligible:                  [{ userId, username }]  (daily limit already hit)
  */
 function payoutQueue(queueData) {
+  const players = queueData.players ?? [];
+  const fill    = queueData.fill    ?? [];
+  const min     = queueData.min;
+
+  // Require at least 2 players in the main queue
+  if (players.length < 2) {
+    return { ok: false, reason: 'insufficient_players', count: players.length };
+  }
+
+  // If a minimum was set it must be met
+  if (min !== null && players.length < min) {
+    return { ok: false, reason: 'min_not_met', required: min, count: players.length };
+  }
+
   const resetTs = getLastDailyReset();
   const now     = Date.now();
   const data    = read();
@@ -225,7 +243,7 @@ function payoutQueue(queueData) {
   const ineligible    = [];
 
   function processPlayer(p, amount, payoutArr) {
-    const player       = data[p.userId] ?? { balance: 0, streak: 0, lastDaily: null };
+    const player = data[p.userId] ?? { balance: 0, streak: 0, lastDaily: null };
     if (p.username) player.username = p.username;
 
     const lastPayout = player.lastQueuePayout ?? 0;
@@ -240,8 +258,8 @@ function payoutQueue(queueData) {
     payoutArr.push({ userId: p.userId, username: p.username, amount });
   }
 
-  for (const p of queueData.players ?? []) processPlayer(p, 20, playerPayouts);
-  for (const p of queueData.fill    ?? []) processPlayer(p,  5, fillPayouts);
+  for (const p of players) processPlayer(p, 20, playerPayouts);
+  for (const p of fill)    processPlayer(p,  5, fillPayouts);
 
   write(data);
 
@@ -250,7 +268,7 @@ function payoutQueue(queueData) {
     ineligible: ineligible.length,
   });
 
-  return { playerPayouts, fillPayouts, ineligible };
+  return { ok: true, playerPayouts, fillPayouts, ineligible };
 }
 
 module.exports = {
