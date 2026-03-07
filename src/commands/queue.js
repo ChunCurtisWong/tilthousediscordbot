@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { buildQueueEmbed, buildQueueComponents } = require('../utils/embeds');
-const { payoutQueue } = require('../utils/trinkets');
+const { payoutQueue, getNextDailyReset } = require('../utils/trinkets');
 
 // ─── Game list ───────────────────────────────────────────────────────────────
 
@@ -258,7 +258,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
     logger.info('Queue max reached', { game, count, max });
 
     // Payout trinkets before deleting queue data
-    const { playerPayouts, fillPayouts } = payoutQueue(queueData);
+    const { playerPayouts, fillPayouts, ineligible } = payoutQueue(queueData);
 
     const fullEmbed = new EmbedBuilder()
       .setColor('#FF6B6B')
@@ -274,7 +274,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       embeds: [fullEmbed],
     });
 
-    // Build payout notification lines
+    // Public payout embed (eligible players only)
     const payoutLines = [
       ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
       ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
@@ -285,6 +285,20 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
         .setTitle('🪙 Trinket Payout')
         .setDescription(`Queue closed naturally — Trinkets awarded!\n\n${payoutLines.join('\n')}`);
       await channel.send({ embeds: [payoutEmbed] });
+    }
+
+    // DM players who already hit their daily queue Trinket limit
+    const resetTs = Math.floor(getNextDailyReset() / 1000);
+    for (const p of ineligible) {
+      try {
+        const user = await interaction.client.users.fetch(p.userId);
+        await user.send(
+          `You joined the **${game}** queue but you've already earned your queue Trinkets for today. ` +
+            `They reset <t:${resetTs}:R> — join a queue after that to earn more! 🪙`
+        );
+      } catch {
+        // DMs may be disabled — silently skip
+      }
     }
 
     storage.deleteQueue(game);

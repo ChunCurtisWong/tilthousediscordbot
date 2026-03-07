@@ -14,12 +14,13 @@ module.exports = {
     const result = claimDaily(userId, username);
 
     if (!result.ok) {
+      const resetTs = Math.floor(result.nextResetTs / 1000);
       const embed = new EmbedBuilder()
         .setColor('#FF6B6B')
         .setTitle('🪙 Daily Already Claimed')
         .setDescription(
-          `You already claimed your daily reward today.\n` +
-          `Come back in **${result.hoursLeft}h ${result.minutesLeft}m**.`
+          `You already claimed your daily reward.\n` +
+          `Come back <t:${resetTs}:R> (resets at **7pm ET** daily).`
         );
       return interaction.reply({ embeds: [embed], ephemeral: true });
     }
@@ -27,9 +28,8 @@ module.exports = {
     logger.info('Daily claimed', { userId, username, streak: result.newStreak, reward: result.reward });
 
     const streakIdx = Math.min(result.newStreak, 5);
-    const bar = STREAK_BARS[streakIdx];
-    const isMax = result.newStreak >= 5;
-    const nextDay = result.newStreak + 1;
+    const bar       = STREAK_BARS[streakIdx];
+    const isMax     = result.newStreak >= 5;
 
     const embed = new EmbedBuilder()
       .setColor('#FFD700')
@@ -41,10 +41,10 @@ module.exports = {
           name: `🔥 Streak — Day ${result.newStreak} ${bar}`,
           value: isMax
             ? '**Maximum streak reached!** (+300 🪙 per day)'
-            : `Day ${nextDay} reward: **${result.nextReward} 🪙** — come back tomorrow to keep your streak!`,
+            : `Day ${result.newStreak + 1} reward: **${result.nextReward} 🪙** — come back after 7pm ET to keep your streak!`,
         },
       )
-      .setFooter({ text: 'Miss a day and your streak resets.' });
+      .setFooter({ text: 'Resets daily at 7pm ET. Miss a window and your streak resets.' });
 
     return interaction.reply({ embeds: [embed], ephemeral: true });
   },
