@@ -219,11 +219,15 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
   const { max, min, scheduledTime } = queueData;
 
+  // Capture channel ID before saving so it's always persisted
+  if (!queueData.channelId) queueData.channelId = interaction.channelId;
+
   // ── Queue full → add to fill list ────────────────────────────────
   if (max !== null && queueData.players.length >= max) {
     queueData.fill.push({ userId, username, joinedAt: Date.now() });
     storage.saveQueue(game, queueData);
     await refreshEmbed(interaction, game, queueData);
+    storage.saveQueue(game, queueData); // persist messageId set by refreshEmbed
 
     const pos = queueData.fill.length;
     logger.info('Player added to fill list', { userId, game, fillPosition: pos });
@@ -239,6 +243,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   queueData.lastActivityAt = Date.now(); // resets 3-hour inactivity timer
   storage.saveQueue(game, queueData);
   await refreshEmbed(interaction, game, queueData);
+  storage.saveQueue(game, queueData); // persist messageId set by refreshEmbed
 
   const count = queueData.players.length;
 

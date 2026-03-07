@@ -12,6 +12,10 @@ const INACTIVITY_TIMEOUT = 10_800; // seconds
 // ─── Shared close notification ────────────────────────────────────────────────
 
 async function sendCloseNotification(client, channelId, game, payoutResult) {
+  if (!channelId) {
+    logger.warn('sendCloseNotification: skipping — channelId is null', { game });
+    return;
+  }
   let channel;
   try {
     channel = await client.channels.fetch(channelId);
@@ -153,28 +157,32 @@ async function runQueueCheck(client, isStartup = false) {
       queueData.reminderSent = true;
       storage.saveQueue(game, queueData);
 
-      const pingList    = queueData.players?.map(p => `<@${p.userId}>`).join(' ') || '';
-      const minutesLeft = Math.ceil(timeUntil / 60);
+      if (!channelId) {
+        logger.warn('Reminder checker: skipping reminder — channelId is null', { game });
+      } else {
+        const pingList    = queueData.players?.map(p => `<@${p.userId}>`).join(' ') || '';
+        const minutesLeft = Math.ceil(timeUntil / 60);
 
-      try {
-        const ch = await client.channels.fetch(channelId);
-        await ch.send({
-          content: `${pingList}\n⏰ **${game}** starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`,
-          embeds: [
-            new EmbedBuilder()
-              .setColor('#FFD700')
-              .setTitle(`⏰ Reminder: ${game} starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`)
-              .setDescription(
-                `**Session Time:** <t:${scheduledTime}:F>\n` +
-                  `Starts <t:${scheduledTime}:R>.\n\n` +
-                  `The queue stays open for **30 minutes** after start time.`
-              )
-              .setTimestamp(),
-          ],
-        });
-        logger.info('Reminder checker: reminder sent', { game, scheduledTime });
-      } catch (err) {
-        logger.error('Reminder checker: failed to send reminder', { game, error: err.message });
+        try {
+          const ch = await client.channels.fetch(channelId);
+          await ch.send({
+            content: `${pingList}\n⏰ **${game}** starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`,
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle(`⏰ Reminder: ${game} starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`)
+                .setDescription(
+                  `**Session Time:** <t:${scheduledTime}:F>\n` +
+                    `Starts <t:${scheduledTime}:R>.\n\n` +
+                    `The queue stays open for **30 minutes** after start time.`
+                )
+                .setTimestamp(),
+            ],
+          });
+          logger.info('Reminder checker: reminder sent', { game, scheduledTime });
+        } catch (err) {
+          logger.error('Reminder checker: failed to send reminder', { game, error: err.message });
+        }
       }
     }
 
@@ -186,22 +194,26 @@ async function runQueueCheck(client, isStartup = false) {
       if (isStartup) {
         // Closed while the bot was offline — no Trinket payout
         logger.info('Queue expired while bot was offline — closing without payout', { game, closeTime });
-        try {
-          const ch = await client.channels.fetch(channelId);
-          await ch.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#888888')
-                .setTitle(`⏹️ Queue Closed: ${game}`)
-                .setDescription(
-                  `The **${game}** queue was closed while the bot was offline. ` +
-                    `No Trinkets were awarded.`
-                )
-                .setTimestamp(),
-            ],
-          });
-        } catch (err) {
-          logger.error('Failed to send offline-close message', { game, error: err.message });
+        if (!channelId) {
+          logger.warn('Offline-close: skipping channel message — channelId is null', { game });
+        } else {
+          try {
+            const ch = await client.channels.fetch(channelId);
+            await ch.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#888888')
+                  .setTitle(`⏹️ Queue Closed: ${game}`)
+                  .setDescription(
+                    `The **${game}** queue was closed while the bot was offline. ` +
+                      `No Trinkets were awarded.`
+                  )
+                  .setTimestamp(),
+              ],
+            });
+          } catch (err) {
+            logger.error('Failed to send offline-close message', { game, error: err.message });
+          }
         }
       } else {
         // Normal close with payout
