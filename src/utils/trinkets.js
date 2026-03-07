@@ -1,11 +1,29 @@
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 const logger = require('./logger');
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const FILE = path.join(DATA_DIR, 'trinkets.json');
+const DATA_DIR         = path.join(process.cwd(), 'data');
+const FILE             = path.join(DATA_DIR, 'trinkets.json');
+const LATEST_BACKUP    = path.join(DATA_DIR, 'trinkets-latest-backup.json');
+const PRE_RESTORE_FILE = path.join(DATA_DIR, 'trinkets-pre-restore.json');
+const BACKUPS_DIR      = path.join(DATA_DIR, 'backups');
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(DATA_DIR))   fs.mkdirSync(DATA_DIR,   { recursive: true });
+if (!fs.existsSync(BACKUPS_DIR)) fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+
+// ─── Async write queue ────────────────────────────────────────────────────────
+// All read/write operations are serialised through this queue so concurrent
+// async callers never interleave and corrupt the JSON file.
+
+let _queue = Promise.resolve();
+
+function withLock(fn) {
+  const p = _queue.then(() => fn());
+  _queue = p.catch(() => {}); // don't let failures break the chain
+  return p;
+}
+
+// ─── File I/O ─────────────────────────────────────────────────────────────────
 
 function read() {
   try {
@@ -17,8 +35,16 @@ function read() {
   }
 }
 
+/**
+ * Writes `data` to trinkets.json.
+ * Before overwriting, copies the current file to trinkets-latest-backup.json
+ * so it always holds the state just before the most recent transaction.
+ */
 function write(data) {
   try {
+    if (fs.existsSync(FILE)) {
+      fs.copyFileSync(FILE, LATEST_BACKUP);
+    }
     fs.writeFileSync(FILE, JSON.stringify(data, null, 2), 'utf8');
   } catch (err) {
     logger.error('Failed to write trinkets.json', { error: err.message });
@@ -32,125 +58,99 @@ function getPlayer(userId) {
 }
 
 function savePlayer(userId, playerData) {
-  const data = read();
-  data[userId] = playerData;
-  write(data);
+  return withLock(() => {
+    const data = read();
+    data[userId] = playerData;
+    write(data);
+  });
 }
 
 /**
  * Adds `amount` Trinkets to a player's balance (use negative to subtract).
- * Pass `username` to keep the stored display name up to date.
- * Returns the new balance.
+ * Returns a Promise resolving to the new balance.
  */
 function addTrinkets(userId, amount, username = null) {
-  const data = read();
-  const player = data[userId] ?? { username: null, balance: 0, streak: 0, lastDaily: null };
-  player.balance = (player.balance ?? 0) + amount;
-  if (username) player.username = username;
-  data[userId] = player;
-  write(data);
-  return player.balance;
+  return withLock(() => {
+    const data   = read();
+    const player = data[userId] ?? { username: null, balance: 0, streak: 0, lastDaily: null };
+    player.balance = (player.balance ?? 0) + amount;
+    if (username) player.username = username;
+    data[userId] = player;
+    write(data);
+    return player.balance;
+  });
 }
 
 // ─── 7pm Eastern Time reset helpers ──────────────────────────────────────────
 
-/**
- * Returns the Eastern-local time components of `utcMs` as if they were UTC.
- * This lets us do date arithmetic in Eastern time using UTC Date methods.
- */
 function getEasternMsEquivalent(utcMs) {
-  const d = new Date(utcMs);
+  const d     = new Date(utcMs);
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   }).formatToParts(d).reduce((acc, { type, value }) => { acc[type] = value; return acc; }, {});
-  // Clamp hour 24 → 0 (some environments emit "24" for midnight)
   const hour = String(parseInt(parts.hour, 10) % 24).padStart(2, '0');
-  const iso = `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}Z`;
+  const iso  = `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}Z`;
   return new Date(iso).getTime();
 }
 
-/**
- * Returns the UTC timestamp (ms) of the most recent 7pm Eastern reset
- * relative to `referenceMs` (defaults to now).
- */
 function getLastDailyReset(referenceMs = Date.now()) {
-  const etFakeMs = getEasternMsEquivalent(referenceMs);
-  const etDate   = new Date(etFakeMs);
-
-  // Build "today at 19:00" in fake-UTC Eastern space
-  const todayAt7pm = Date.UTC(
-    etDate.getUTCFullYear(),
-    etDate.getUTCMonth(),
-    etDate.getUTCDate(),
-    19, 0, 0, 0
-  );
-
-  // If Eastern local time hasn't reached 7pm yet, last reset was yesterday at 7pm
+  const etFakeMs  = getEasternMsEquivalent(referenceMs);
+  const etDate    = new Date(etFakeMs);
+  const todayAt7pm = Date.UTC(etDate.getUTCFullYear(), etDate.getUTCMonth(), etDate.getUTCDate(), 19, 0, 0, 0);
   const lastResetFake = etFakeMs >= todayAt7pm ? todayAt7pm : todayAt7pm - 86_400_000;
-
-  // Convert fake-UTC Eastern time back to real UTC
-  const etOffset = referenceMs - etFakeMs; // ms Eastern is behind UTC
+  const etOffset  = referenceMs - etFakeMs;
   return lastResetFake + etOffset;
 }
 
-/** Returns the UTC timestamp (ms) of the next 7pm Eastern reset. */
 function getNextDailyReset() {
   return getLastDailyReset() + 86_400_000;
 }
 
 // ─── Daily reward ─────────────────────────────────────────────────────────────
 
-const STREAK_REWARDS = [0, 100, 150, 200, 250, 300]; // index = streak day (capped at 5)
+const STREAK_REWARDS = [0, 100, 150, 200, 250, 300];
 
 function streakReward(streak) {
   return STREAK_REWARDS[Math.min(streak, 5)];
 }
 
-/**
- * Attempts to claim the daily reward for a user.
- * The claim window resets at 7pm Eastern time every day.
- * Returns { ok: false, nextResetTs } if already claimed this window,
- * or { ok: true, reward, newStreak, newBalance, nextReward } on success.
- */
 function claimDaily(userId, username) {
-  const data   = read();
-  const player = data[userId] ?? { username: null, balance: 0, streak: 0, lastDaily: null };
-  const now    = Date.now();
+  return withLock(() => {
+    const data   = read();
+    const player = data[userId] ?? { username: null, balance: 0, streak: 0, lastDaily: null };
+    const now    = Date.now();
 
-  const currentWindowStart = getLastDailyReset(now);
-  const prevWindowStart    = currentWindowStart - 86_400_000;
+    const currentWindowStart = getLastDailyReset(now);
+    const prevWindowStart    = currentWindowStart - 86_400_000;
 
-  // Already claimed in the current window?
-  if (player.lastDaily !== null && player.lastDaily >= currentWindowStart) {
-    return { ok: false, nextResetTs: currentWindowStart + 86_400_000 };
-  }
+    if (player.lastDaily !== null && player.lastDaily >= currentWindowStart) {
+      return { ok: false, nextResetTs: currentWindowStart + 86_400_000 };
+    }
 
-  // Determine streak continuity
-  if (player.lastDaily === null || player.lastDaily < prevWindowStart) {
-    // Never claimed, or missed a day — reset streak
-    player.streak = 0;
-  }
-  // Otherwise: claimed in the previous window — consecutive, keep and increment
+    if (player.lastDaily === null || player.lastDaily < prevWindowStart) {
+      player.streak = 0;
+    }
 
-  player.streak  = (player.streak ?? 0) + 1;
-  const reward   = streakReward(player.streak);
-  player.balance = (player.balance ?? 0) + reward;
-  player.lastDaily = now;
-  if (username) player.username = username;
+    player.streak    = (player.streak ?? 0) + 1;
+    const reward     = streakReward(player.streak);
+    player.balance   = (player.balance ?? 0) + reward;
+    player.lastDaily = now;
+    if (username) player.username = username;
 
-  data[userId] = player;
-  write(data);
+    data[userId] = player;
+    write(data);
 
-  return {
-    ok: true,
-    reward,
-    newStreak: player.streak,
-    newBalance: player.balance,
-    nextReward: streakReward(player.streak + 1),
-  };
+    return {
+      ok: true,
+      reward,
+      newStreak:  player.streak,
+      newBalance: player.balance,
+      nextReward: streakReward(player.streak + 1),
+    };
+  });
 }
 
 // ─── Leaderboard ──────────────────────────────────────────────────────────────
@@ -167,9 +167,6 @@ function getLeaderboard(limit = 3) {
 
 const COOLDOWN_MS = 30_000;
 
-/**
- * Returns milliseconds remaining on cooldown, or null if not on cooldown.
- */
 function checkCooldown(userId, command) {
   const cooldowns = read()._cooldowns ?? {};
   const lastUsed  = cooldowns[command]?.[userId] ?? 0;
@@ -178,11 +175,13 @@ function checkCooldown(userId, command) {
 }
 
 function setCooldown(userId, command) {
-  const data = read();
-  if (!data._cooldowns) data._cooldowns = {};
-  if (!data._cooldowns[command]) data._cooldowns[command] = {};
-  data._cooldowns[command][userId] = Date.now();
-  write(data);
+  return withLock(() => {
+    const data = read();
+    if (!data._cooldowns) data._cooldowns = {};
+    if (!data._cooldowns[command]) data._cooldowns[command] = {};
+    data._cooldowns[command][userId] = Date.now();
+    write(data);
+  });
 }
 
 // ─── Pending bets ─────────────────────────────────────────────────────────────
@@ -192,83 +191,164 @@ function getPendingBet(betId) {
 }
 
 function savePendingBet(betId, betData) {
-  const data = read();
-  if (!data._pendingBets) data._pendingBets = {};
-  data._pendingBets[betId] = betData;
-  write(data);
+  return withLock(() => {
+    const data = read();
+    if (!data._pendingBets) data._pendingBets = {};
+    data._pendingBets[betId] = betData;
+    write(data);
+  });
 }
 
 function deletePendingBet(betId) {
-  const data = read();
-  if (!data._pendingBets?.[betId]) return;
-  delete data._pendingBets[betId];
-  write(data);
+  return withLock(() => {
+    const data = read();
+    if (!data._pendingBets?.[betId]) return;
+    delete data._pendingBets[betId];
+    write(data);
+  });
 }
 
 // ─── Queue payout ─────────────────────────────────────────────────────────────
 
-/**
- * Awards Trinkets for a naturally-closed queue.
- *
- * Payout requirements (returns { ok: false, reason, ... } if not met):
- *  - At least 2 players must be in the main queue.
- *  - If a minimum was set, it must be met.
- *
- * For eligible players the daily 7pm ET limit is enforced.
- * Returns { ok: true, playerPayouts, fillPayouts, ineligible } on success.
- * playerPayouts / fillPayouts: [{ userId, username, amount }]
- * ineligible:                  [{ userId, username }]  (daily limit already hit)
- */
 function payoutQueue(queueData) {
-  const players = queueData.players ?? [];
-  const fill    = queueData.fill    ?? [];
-  const min     = queueData.min;
+  return withLock(() => {
+    const players = queueData.players ?? [];
+    const fill    = queueData.fill    ?? [];
+    const min     = queueData.min;
 
-  // Require at least 2 players in the main queue
-  if (players.length < 2) {
-    return { ok: false, reason: 'insufficient_players', count: players.length };
-  }
-
-  // If a minimum was set it must be met
-  if (min !== null && players.length < min) {
-    return { ok: false, reason: 'min_not_met', required: min, count: players.length };
-  }
-
-  const resetTs = getLastDailyReset();
-  const now     = Date.now();
-  const data    = read();
-
-  const playerPayouts = [];
-  const fillPayouts   = [];
-  const ineligible    = [];
-
-  function processPlayer(p, amount, payoutArr) {
-    const player = data[p.userId] ?? { balance: 0, streak: 0, lastDaily: null };
-    if (p.username) player.username = p.username;
-
-    const lastPayout = player.lastQueuePayout ?? 0;
-    if (lastPayout >= resetTs) {
-      ineligible.push({ userId: p.userId, username: p.username });
-      return;
+    if (players.length < 2) {
+      return { ok: false, reason: 'insufficient_players', count: players.length };
+    }
+    if (min !== null && players.length < min) {
+      return { ok: false, reason: 'min_not_met', required: min, count: players.length };
     }
 
-    player.balance         = (player.balance ?? 0) + amount;
-    player.lastQueuePayout = now;
-    data[p.userId]         = player;
-    payoutArr.push({ userId: p.userId, username: p.username, amount });
+    const resetTs = getLastDailyReset();
+    const now     = Date.now();
+    const data    = read();
+
+    const playerPayouts = [];
+    const fillPayouts   = [];
+    const ineligible    = [];
+
+    function processPlayer(p, amount, payoutArr) {
+      const player = data[p.userId] ?? { balance: 0, streak: 0, lastDaily: null };
+      if (p.username) player.username = p.username;
+      const lastPayout = player.lastQueuePayout ?? 0;
+      if (lastPayout >= resetTs) {
+        ineligible.push({ userId: p.userId, username: p.username });
+        return;
+      }
+      player.balance         = (player.balance ?? 0) + amount;
+      player.lastQueuePayout = now;
+      data[p.userId]         = player;
+      payoutArr.push({ userId: p.userId, username: p.username, amount });
+    }
+
+    for (const p of players) processPlayer(p, 20, playerPayouts);
+    for (const p of fill)    processPlayer(p,  5, fillPayouts);
+
+    write(data);
+    logger.info('Trinket payout complete', {
+      eligible:   playerPayouts.length + fillPayouts.length,
+      ineligible: ineligible.length,
+    });
+    return { ok: true, playerPayouts, fillPayouts, ineligible };
+  });
+}
+
+// ─── Backup helpers ───────────────────────────────────────────────────────────
+
+function hourlyTimestamp() {
+  const d  = new Date();
+  const y  = d.getUTCFullYear();
+  const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dy = String(d.getUTCDate()).padStart(2, '0');
+  const h  = String(d.getUTCHours()).padStart(2, '0');
+  return `${y}-${mo}-${dy}-${h}`;
+}
+
+function cleanupOldBackups(keep) {
+  if (!fs.existsSync(BACKUPS_DIR)) return;
+  const files = fs.readdirSync(BACKUPS_DIR)
+    .filter(f => /^trinkets-\d{4}-\d{2}-\d{2}-\d{2}\.json$/.test(f))
+    .sort(); // lexicographic = chronological for YYYY-MM-DD-HH
+  for (const file of files.slice(0, Math.max(0, files.length - keep))) {
+    try { fs.unlinkSync(path.join(BACKUPS_DIR, file)); } catch {}
+  }
+}
+
+/**
+ * Returns a list of available backups for the /th-restore dropdown.
+ * Each entry: { key, label, description }
+ */
+function getBackupList() {
+  const list = [];
+
+  if (fs.existsSync(LATEST_BACKUP)) {
+    const stat = fs.statSync(LATEST_BACKUP);
+    const d    = new Date(stat.mtimeMs);
+    list.push({
+      key:         'latest',
+      label:       'Latest backup (before last transaction)',
+      description: `Saved ${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+    });
   }
 
-  for (const p of players) processPlayer(p, 20, playerPayouts);
-  for (const p of fill)    processPlayer(p,  5, fillPayouts);
+  if (fs.existsSync(BACKUPS_DIR)) {
+    const files = fs.readdirSync(BACKUPS_DIR)
+      .filter(f => /^trinkets-\d{4}-\d{2}-\d{2}-\d{2}\.json$/.test(f))
+      .sort()
+      .reverse()
+      .slice(0, 24);
+    for (const file of files) {
+      const ts    = file.replace('trinkets-', '').replace('.json', '');
+      const parts = ts.split('-');
+      const label = `${parts[0]}-${parts[1]}-${parts[2]} ${parts[3]}:00 UTC`;
+      list.push({ key: ts, label: `Hourly: ${label}`, description: `Snapshot at ${label}` });
+    }
+  }
 
-  write(data);
+  return list;
+}
 
-  logger.info('Trinket payout complete', {
-    eligible:   playerPayouts.length + fillPayouts.length,
-    ineligible: ineligible.length,
+/**
+ * Restores trinkets.json from the named backup.
+ * Saves the current state to trinkets-pre-restore.json first.
+ */
+function restoreBackup(key) {
+  return withLock(() => {
+    const sourceFile = key === 'latest'
+      ? LATEST_BACKUP
+      : path.join(BACKUPS_DIR, `trinkets-${key}.json`);
+
+    if (!fs.existsSync(sourceFile)) {
+      throw new Error(`Backup not found: ${path.basename(sourceFile)}`);
+    }
+
+    if (fs.existsSync(FILE)) {
+      fs.copyFileSync(FILE, PRE_RESTORE_FILE);
+    }
+    // Copy directly — don't call write() so we don't overwrite the latest backup
+    fs.copyFileSync(sourceFile, FILE);
+    logger.info('Trinkets restored from backup', { key });
   });
+}
 
-  return { ok: true, playerPayouts, fillPayouts, ineligible };
+// ─── Hourly backup scheduler ──────────────────────────────────────────────────
+
+function startTrinketBackups() {
+  logger.info('Trinkets: backup system started (hourly interval)');
+  setInterval(() => {
+    withLock(() => {
+      if (!fs.existsSync(FILE)) return;
+      const ts   = hourlyTimestamp();
+      const dest = path.join(BACKUPS_DIR, `trinkets-${ts}.json`);
+      fs.copyFileSync(FILE, dest);
+      cleanupOldBackups(24);
+      logger.info('Trinkets: hourly backup saved', { file: `trinkets-${ts}.json` });
+    });
+  }, 3_600_000);
 }
 
 module.exports = {
@@ -286,4 +366,7 @@ module.exports = {
   getPendingBet,
   savePendingBet,
   deletePendingBet,
+  getBackupList,
+  restoreBackup,
+  startTrinketBackups,
 };

@@ -32,7 +32,7 @@ module.exports = {
       return interaction.reply({ content: '❌ Cannot give Trinkets to a bot.', ephemeral: true });
     }
 
-    const newBalance = addTrinkets(target.id, amount, target.username);
+    const newBalance = await addTrinkets(target.id, amount, target.username);
     logger.info('Trinkets given by admin', {
       givenBy: interaction.user.id,
       targetId: target.id,

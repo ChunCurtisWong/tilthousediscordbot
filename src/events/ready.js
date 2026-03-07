@@ -1,6 +1,7 @@
 const logger = require('../utils/logger');
-const { startYouTubePoller } = require('../utils/youtube');
+const { startYouTubePoller }  = require('../utils/youtube');
 const { startReminderChecker } = require('../utils/reminders');
+const { startTrinketBackups }  = require('../utils/trinkets');
 
 module.exports = {
   name: 'ready',
@@ -17,5 +18,6 @@ module.exports = {
 
     startYouTubePoller(client);
     startReminderChecker(client);
+    startTrinketBackups();
   },
 };

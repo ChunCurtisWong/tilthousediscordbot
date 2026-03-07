@@ -155,8 +155,8 @@ module.exports = {
       amount,
       createdAt: Date.now(),
     };
-    savePendingBet(betId, betData);
-    setCooldown(challenger.id, 'bet');
+    await savePendingBet(betId, betData);
+    await setCooldown(challenger.id, 'bet');
 
     logger.info('Bet challenge posted', { betId, challengerId: challenger.id, targetId: target.id, amount });
 
@@ -169,7 +169,7 @@ module.exports = {
     setTimeout(async () => {
       const stillPending = getPendingBet(betId);
       if (!stillPending) return; // Already resolved
-      deletePendingBet(betId);
+      await deletePendingBet(betId);
       logger.info('Bet expired', { betId });
       try {
         const msg = await interaction.fetchReply();
@@ -200,7 +200,7 @@ module.exports = {
 
     // Expiry guard (belt-and-suspenders in case setTimeout hasn't fired yet)
     if (Date.now() - betData.createdAt > BET_EXPIRY_MS) {
-      deletePendingBet(betId);
+      await deletePendingBet(betId);
       return interaction.editReply({
         embeds: [buildExpiredEmbed(betData.challengerId, betData.targetId)],
         components: [buildButtons(betId, true)],
@@ -212,7 +212,7 @@ module.exports = {
     const targetBal     = getPlayer(betData.targetId).balance ?? 0;
 
     if (challengerBal < betData.amount) {
-      deletePendingBet(betId);
+      await deletePendingBet(betId);
       return interaction.editReply({
         embeds: [
           new EmbedBuilder()
@@ -233,15 +233,15 @@ module.exports = {
     }
 
     // ── Resolve the duel ──────────────────────────────────────────────
-    deletePendingBet(betId);
+    await deletePendingBet(betId);
 
     const challengerWins = Math.random() < 0.5;
     const [winnerId, winnerName, loserId, loserName] = challengerWins
       ? [betData.challengerId, betData.challengerName, betData.targetId, betData.targetName]
       : [betData.targetId, betData.targetName, betData.challengerId, betData.challengerName];
 
-    const winnerNewBal = addTrinkets(winnerId, betData.amount, winnerName);
-    const loserNewBal  = addTrinkets(loserId, -betData.amount, loserName);
+    const winnerNewBal = await addTrinkets(winnerId, betData.amount, winnerName);
+    const loserNewBal  = await addTrinkets(loserId, -betData.amount, loserName);
 
     logger.info('Bet resolved', { betId, winnerId, loserId, amount: betData.amount });
 
@@ -273,7 +273,7 @@ module.exports = {
       return interaction.followUp({ content: '❌ Only the challenged player can decline.', ephemeral: true });
     }
 
-    deletePendingBet(betId);
+    await deletePendingBet(betId);
     logger.info('Bet declined', { betId, targetId: interaction.user.id });
 
     await interaction.editReply({

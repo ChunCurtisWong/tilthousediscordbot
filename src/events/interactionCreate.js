@@ -94,6 +94,18 @@ module.exports = {
             await betCmd.handleDecline(interaction, betId);
           }
 
+        // Restore buttons
+        } else if (customId.startsWith('restore:')) {
+          const restoreCmd = interaction.client.commands.get('th-restore');
+          if (customId.startsWith('restore:yes:')) {
+            const key = customId.slice('restore:yes:'.length);
+            logger.info('Button: restore confirm', { key, userId: interaction.user.id });
+            await restoreCmd.handleConfirmYes(interaction, key);
+          } else if (customId === 'restore:no') {
+            logger.info('Button: restore cancel', { userId: interaction.user.id });
+            await restoreCmd.handleConfirmNo(interaction);
+          }
+
         // List buttons
         } else if (customId.startsWith('l:')) {
           const listCmd = interaction.client.commands.get('th-list');
@@ -155,6 +167,11 @@ module.exports = {
         cmd = interaction.client.commands.get('th-teams');
         handler = cmd?.handleSplitSelect;
         logLabel = 'Select: teams split method';
+      // Restore select menu
+      } else if (customId === 'restore:select') {
+        cmd = interaction.client.commands.get('th-restore');
+        handler = cmd?.handleSelect;
+        logLabel = 'Select: restore backup';
       }
 
       if (handler) {

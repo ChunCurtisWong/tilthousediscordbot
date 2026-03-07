@@ -81,8 +81,8 @@ module.exports = {
     const won = choice !== null ? result === choice : isHeads;
 
     // Apply and set cooldown
-    const newBalance = addTrinkets(userId, won ? bet : -bet, username);
-    setCooldown(userId, 'coinflip');
+    const newBalance = await addTrinkets(userId, won ? bet : -bet, username);
+    await setCooldown(userId, 'coinflip');
 
     logger.info('Coinflip bet result', { userId, bet, choice, result, won, newBalance });
 

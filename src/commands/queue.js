@@ -273,7 +273,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       embeds: [fullEmbed],
     });
 
-    const payoutResult = payoutQueue(queueData);
+    const payoutResult = await payoutQueue(queueData);
     await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult);
 
     storage.deleteQueue(game);

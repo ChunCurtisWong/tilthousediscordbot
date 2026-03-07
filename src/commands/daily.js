@@ -11,7 +11,7 @@ module.exports = {
 
   async execute(interaction) {
     const { id: userId, username } = interaction.user;
-    const result = claimDaily(userId, username);
+    const result = await claimDaily(userId, username);
 
     if (!result.ok) {
       const resetTs = Math.floor(result.nextResetTs / 1000);
