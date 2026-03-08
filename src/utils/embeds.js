@@ -25,14 +25,11 @@ function buildQueueEmbed(game, queueData) {
     color = '#5865F2';
   }
 
-  // ── Capacity string ──────────────────────────────────────────────
-  let capacityStr;
-  if (max !== null) capacityStr = `${count}/${max} players`;
-  else if (min !== null) capacityStr = `${count} players (min ${min})`;
-  else capacityStr = `${count} player${count !== 1 ? 's' : ''}`;
-
-  // ── Description: status + scheduled time ────────────────────────
+  // ── Description: status + player limits + scheduled time ────────
   let description = `**Status:** ${status}`;
+  if (min !== null) description += `\n👥 Min Players: ${min}`;
+  if (max !== null) description += `\n🔒 Max Players: ${max}`;
+  if (min === null && max === null) description += `\n👥 Players: Unlimited`;
   if (scheduledTime) {
     description += `\n\n📅 <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)`;
 
@@ -63,7 +60,7 @@ function buildQueueEmbed(game, queueData) {
     .setTitle(`🎮 ${game}`)
     .setDescription(description)
     .addFields({
-      name: `👥 ${capacityStr}`,
+      name: `👥 Players (${count})`,
       value:
         players.length > 0
           ? players.map((p, i) => `${i + 1}. <@${p.userId}>`).join('\n')
@@ -77,6 +74,14 @@ function buildQueueEmbed(game, queueData) {
       value: fill
         .map((p, i) => `${i + 1}. <@${p.userId}>${i === 0 ? ' *(first in line)*' : ''}`)
         .join('\n'),
+      inline: false,
+    });
+  }
+
+  if (max !== null && count >= max) {
+    embed.addFields({
+      name: '\u200b',
+      value: '⚠️ Queue is full — you can still join as a fill player!',
       inline: false,
     });
   }
