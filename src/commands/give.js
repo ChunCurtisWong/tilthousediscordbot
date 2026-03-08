@@ -6,6 +6,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('th-give')
     .setDescription('(Admin) Give Trinkets to a user')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addUserOption(opt =>
       opt.setName('user').setDescription('User to give Trinkets to').setRequired(true)
     )

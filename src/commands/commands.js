@@ -53,10 +53,16 @@ module.exports = {
             '`/th-daily` — Claim your daily Trinkets reward (streak bonuses!)',
             '`/th-trinkets` — View your Trinkets balance and streak',
             '`/th-leaderboard` — View the top 3 Trinket holders',
-            '`/th-give @user amount` — (Admin) Give Trinkets to a user',
             '`/th-coinflip` — Flip a coin, optional bet amount and choice',
             '`/th-bet @user amount` — Challenge a user to a Trinket duel',
-            '`/th-restore` — (Admin) Restore Trinket data from a backup',
+          ].join('\n'),
+        },
+        {
+          name: '🔒 Admin Only',
+          value: [
+            '`/th-give @user amount` — Give Trinkets to a user',
+            '`/th-restore` — Restore Trinket data from a backup',
+            '`/th-health` — Run a full system health check',
           ].join('\n'),
         },
       )
