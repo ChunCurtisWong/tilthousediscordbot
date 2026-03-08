@@ -12,7 +12,7 @@ logs/
 node_modules/
 
 # ── Runtime data (generated automatically at runtime) ────────────────────────
-data/*.json
+data/
 
 # ── OS artifacts ─────────────────────────────────────────────────────────────
 .DS_Store

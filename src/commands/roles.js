@@ -37,7 +37,7 @@ module.exports = {
     try {
       await Promise.race([
         interaction.guild.members.fetch(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]);
     } catch (err) {
       logger.warn('th-roles: members.fetch() timed out or failed, using cache', { error: err.message });
@@ -45,6 +45,7 @@ module.exports = {
     const mappingLines = ACTIVE_ROLES.map(e => {
       const serverRole = interaction.guild.roles.cache.find(r => r.name === e.role);
       const count = serverRole ? serverRole.members.size : 0;
+	console.log(`Role: ${e.role} | Found: ${!!serverRole} | Count: ${count} | Actual size: 	${serverRole?.members?.size}`);
       const suffix = count > 0 ? ` *(${count})*` : '';
       return `${e.emoji}  **${e.label}** → ${e.role}${suffix}`;
     });
