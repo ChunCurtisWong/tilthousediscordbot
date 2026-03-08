@@ -77,7 +77,7 @@ module.exports = {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
   async execute(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply();
 
     const checks = [];
 
@@ -146,7 +146,7 @@ module.exports = {
       .setTitle('🩺 System Health Check')
       .setDescription(checks.join('\n'))
       .setTimestamp()
-      .setFooter({ text: 'Only visible to you' });
+      .setFooter({ text: 'Health check' });
 
     return interaction.editReply({ embeds: [embed] });
   },
