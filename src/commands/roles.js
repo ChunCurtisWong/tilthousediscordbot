@@ -32,8 +32,14 @@ module.exports = {
       }
     }
 
-    // ── Build the embed ───────────────────────────────────────────────
-    const mappingLines = ACTIVE_ROLES.map(e => `${e.emoji}  **${e.label}** → ${e.role}`);
+    // ── Count existing role holders ──────────────────────────────────
+    await interaction.guild.members.fetch();  // populate cache
+    const mappingLines = ACTIVE_ROLES.map(e => {
+      const serverRole = interaction.guild.roles.cache.find(r => r.name === e.role);
+      const count = serverRole ? serverRole.members.size : 0;
+      const suffix = count > 0 ? ` *(${count})*` : '';
+      return `${e.emoji}  **${e.label}** → ${e.role}${suffix}`;
+    });
 
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
