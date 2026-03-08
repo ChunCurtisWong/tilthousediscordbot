@@ -3,12 +3,12 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('th-commands')
-    .setDescription('Show all available TiltHouse bot commands'),
+    .setDescription('Show all available Tilthouse bot commands'),
 
   async execute(interaction) {
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
-      .setTitle('TiltHouse Bot — Commands')
+      .setTitle('Tilthouse Bot — Commands')
       .addFields(
         {
           name: '🎮 Queue Commands',
@@ -45,7 +45,12 @@ module.exports = {
           name: '🎲 Fun',
           value: [
             '`/th-roll` — Roll a dice (default 6 sides, up to 1000)',
+            '`/th-coinflip` — Flip a coin, optional bet amount and choice',
           ].join('\n'),
+        },
+        {
+          name: '🌐 Server',
+          value: '`/th-roles` — React to assign yourself a game role',
         },
         {
           name: '🪙 Trinkets',
@@ -53,7 +58,6 @@ module.exports = {
             '`/th-daily` — Claim your daily Trinkets reward (streak bonuses!)',
             '`/th-trinkets` — View your Trinkets balance and streak',
             '`/th-leaderboard` — View the top 3 Trinket holders',
-            '`/th-coinflip` — Flip a coin, optional bet amount and choice',
             '`/th-bet @user amount` — Challenge a user to a Trinket duel',
           ].join('\n'),
         },
