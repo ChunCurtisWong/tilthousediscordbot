@@ -121,6 +121,16 @@ function deleteSchedule(game) {
   writeJSON('schedules.json', schedules);
 }
 
+// ─── Roles ─────────────────────────────────────────────────────────────────
+
+function getRolesData() {
+  return readJSON('roles.json');
+}
+
+function saveRolesData(data) {
+  writeJSON('roles.json', data);
+}
+
 module.exports = {
   getLastVideoId,
   setLastVideoId,
@@ -138,4 +148,6 @@ module.exports = {
   getSchedule,
   saveSchedule,
   deleteSchedule,
+  getRolesData,
+  saveRolesData,
 };

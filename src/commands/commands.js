@@ -63,6 +63,7 @@ module.exports = {
             '`/th-give @user amount` — Give Trinkets to a user',
             '`/th-restore` — Restore Trinket data from a backup',
             '`/th-health` — Run a full system health check',
+            '`/th-roles` — Post the reaction role embed in #roles',
           ].join('\n'),
         },
       )
