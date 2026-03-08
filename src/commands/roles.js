@@ -3,6 +3,13 @@ const logger = require('../utils/logger');
 const storage = require('../utils/storage');
 const { EMOJI_ROLES } = require('../utils/roleMap');
 
+const DEV_EMOJI_ROLES = [
+  { emoji: '🧪', label: 'Tester', role: 'testers' },
+];
+
+const isDev = (process.env.NODE_ENV || 'development') === 'development';
+const ACTIVE_ROLES = isDev ? DEV_EMOJI_ROLES : EMOJI_ROLES;
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('th-roles')
@@ -33,7 +40,7 @@ module.exports = {
     }
 
     // ── Build the embed ───────────────────────────────────────────────
-    const mappingLines = EMOJI_ROLES.map(e => `${e.emoji}  **${e.label}** → ${e.role}`);
+    const mappingLines = ACTIVE_ROLES.map(e => `${e.emoji}  **${e.label}** → ${e.role}`);
 
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
@@ -52,7 +59,7 @@ module.exports = {
     });
 
     // ── Add all reactions in order ────────────────────────────────────
-    for (const { emoji } of EMOJI_ROLES) {
+    for (const { emoji } of ACTIVE_ROLES) {
       try {
         await msg.react(emoji);
       } catch (err) {
@@ -65,7 +72,7 @@ module.exports = {
     logger.info('Reaction role embed posted', { messageId: msg.id, channelId: rolesChannel.id });
 
     return interaction.editReply({
-      content: `✅ Reaction role embed posted in ${rolesChannel}. All ${EMOJI_ROLES.length} reactions added.`,
+      content: `✅ Reaction role embed posted in ${rolesChannel}. All ${ACTIVE_ROLES.length} reactions added.`,
     });
   },
 };
