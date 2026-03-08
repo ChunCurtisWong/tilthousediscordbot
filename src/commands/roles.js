@@ -1,14 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const logger = require('../utils/logger');
 const storage = require('../utils/storage');
-const { EMOJI_ROLES } = require('../utils/roleMap');
-
-const DEV_EMOJI_ROLES = [
-  { emoji: '🧪', label: 'Tester', role: 'testers' },
-];
-
-const isDev = (process.env.NODE_ENV || 'development') === 'development';
-const ACTIVE_ROLES = isDev ? DEV_EMOJI_ROLES : EMOJI_ROLES;
+const { ACTIVE_ROLES } = require('../utils/roleMap');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -44,7 +37,7 @@ module.exports = {
 
     const embed = new EmbedBuilder()
       .setColor('#5865F2')
-      .setTitle('🎮 Game Role Selection')
+      .setTitle('Role Selection')
       .setDescription(
         'React to assign yourself a game notification role.\n' +
         'Click the reaction again to remove it.\n\n' +

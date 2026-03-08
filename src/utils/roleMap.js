@@ -19,6 +19,18 @@ const EMOJI_ROLES = [
   { emoji: '🃏', label: 'Trading Card Games',      role: 'TCG'           },
 ];
 
+const DEV_EMOJI_ROLES = [
+  { emoji: '🧪', label: 'Tester', role: 'testers' },
+];
+
+const isDev = (process.env.NODE_ENV || 'development') === 'development';
+
+/**
+ * The active role map used at runtime — DEV_EMOJI_ROLES in development,
+ * EMOJI_ROLES in production.
+ */
+const ACTIVE_ROLES = isDev ? DEV_EMOJI_ROLES : EMOJI_ROLES;
+
 /**
  * Strips Unicode variation selectors (U+FE0F) so emoji like ⛏️ and ⛏
  * compare as equal regardless of how Discord normalises them.
@@ -28,12 +40,12 @@ function normalizeEmoji(str) {
 }
 
 /**
- * Find the EMOJI_ROLES entry whose emoji matches the given reaction emoji name.
+ * Find the ACTIVE_ROLES entry whose emoji matches the given reaction emoji name.
  * Returns undefined if no match.
  */
 function findRoleEntry(emojiName) {
   const norm = normalizeEmoji(emojiName);
-  return EMOJI_ROLES.find(e => normalizeEmoji(e.emoji) === norm);
+  return ACTIVE_ROLES.find(e => normalizeEmoji(e.emoji) === norm);
 }
 
-module.exports = { EMOJI_ROLES, normalizeEmoji, findRoleEntry };
+module.exports = { EMOJI_ROLES, DEV_EMOJI_ROLES, ACTIVE_ROLES, normalizeEmoji, findRoleEntry };
