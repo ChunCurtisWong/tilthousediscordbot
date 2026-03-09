@@ -14,8 +14,8 @@ if (!DISCORD_TOKEN || !CLIENT_ID) {
   process.exit(1);
 }
 
-if (env === 'development' && !GUILD_ID) {
-  logger.error('GUILD_ID is required for development (guild-scoped) command deployment.');
+if (!GUILD_ID) {
+  logger.error('GUILD_ID is required for guild-scoped command deployment.');
   process.exit(1);
 }
 
@@ -36,19 +36,10 @@ const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
 
 (async () => {
   try {
-    logger.info(`Deploying ${commands.length} command(s) in [${env}] mode…`);
+    logger.info(`Deploying ${commands.length} command(s) to guild ${GUILD_ID}…`);
 
-    if (env === 'development') {
-      // Guild commands update instantly — great for testing
-      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
-        body: commands,
-      });
-      logger.info(`✅ Commands deployed to guild ${GUILD_ID} (development / instant update)`);
-    } else {
-      // Global commands can take up to 1 hour to propagate
-      await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-      logger.info('✅ Commands deployed globally (production — up to 1 hour to propagate)');
-    }
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+    logger.info(`✅ Commands deployed to guild ${GUILD_ID} (instant update)`);
   } catch (err) {
     logger.error('Command deployment failed', { error: err.message, stack: err.stack });
     process.exit(1);
