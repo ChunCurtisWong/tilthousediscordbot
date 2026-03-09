@@ -110,10 +110,10 @@ module.exports = {
 
     // ── Basic guards ──────────────────────────────────────────────────
     if (target.id === challenger.id) {
-      return interaction.reply({ content: "❌ You can't challenge yourself.", ephemeral: true });
+      return interaction.reply({ content: "❌ You can't challenge yourself.", flags: 64 });
     }
     if (target.bot) {
-      return interaction.reply({ content: "❌ You can't challenge a bot.", ephemeral: true });
+      return interaction.reply({ content: "❌ You can't challenge a bot.", flags: 64 });
     }
 
     // ── Cooldown ──────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ module.exports = {
       const secs = Math.ceil(remaining / 1000);
       return interaction.reply({
         content: `⏳ Wait **${secs}s** before issuing another challenge.`,
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -133,15 +133,15 @@ module.exports = {
     const amount           = parseBet(amountStr, challengerBal);
 
     if (amount === null) {
-      return interaction.reply({ content: '❌ Enter a valid positive number or `all`.', ephemeral: true });
+      return interaction.reply({ content: '❌ Enter a valid positive number or `all`.', flags: 64 });
     }
     if (amount < 10) {
-      return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', ephemeral: true });
+      return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', flags: 64 });
     }
     if (amount > challengerBal) {
       return interaction.reply({
         content: `❌ You only have **${challengerBal} 🪙** — you can't bet **${amount} 🪙**.`,
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -190,12 +190,12 @@ module.exports = {
 
     const betData = getPendingBet(betId);
     if (!betData) {
-      return interaction.followUp({ content: '❌ This challenge no longer exists.', ephemeral: true });
+      return interaction.followUp({ content: '❌ This challenge no longer exists.', flags: 64 });
     }
 
     // Only the target can accept
     if (interaction.user.id !== betData.targetId) {
-      return interaction.followUp({ content: '❌ Only the challenged player can accept.', ephemeral: true });
+      return interaction.followUp({ content: '❌ Only the challenged player can accept.', flags: 64 });
     }
 
     // Expiry guard (belt-and-suspenders in case setTimeout hasn't fired yet)
@@ -228,7 +228,7 @@ module.exports = {
     if (targetBal < betData.amount) {
       return interaction.followUp({
         content: `❌ You need at least **${betData.amount} 🪙** to accept this challenge. You have **${targetBal} 🪙**.`,
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -255,7 +255,7 @@ module.exports = {
     const accepterNewBal = interaction.user.id === winnerId ? winnerNewBal : loserNewBal;
     await interaction.followUp({
       content: `Your new balance: **${accepterNewBal} 🪙**`,
-      ephemeral: true,
+      flags: 64,
     });
   },
 
@@ -266,11 +266,11 @@ module.exports = {
 
     const betData = getPendingBet(betId);
     if (!betData) {
-      return interaction.followUp({ content: '❌ This challenge no longer exists.', ephemeral: true });
+      return interaction.followUp({ content: '❌ This challenge no longer exists.', flags: 64 });
     }
 
     if (interaction.user.id !== betData.targetId) {
-      return interaction.followUp({ content: '❌ Only the challenged player can decline.', ephemeral: true });
+      return interaction.followUp({ content: '❌ Only the challenged player can decline.', flags: 64 });
     }
 
     await deletePendingBet(betId);

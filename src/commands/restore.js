@@ -19,12 +19,12 @@ module.exports = {
 
   async execute(interaction) {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-      return interaction.reply({ content: '❌ Only administrators can use this command.', ephemeral: true });
+      return interaction.reply({ content: '❌ Only administrators can use this command.', flags: 64 });
     }
 
     const backups = getBackupList();
     if (backups.length === 0) {
-      return interaction.reply({ content: '❌ No backups are available yet.', ephemeral: true });
+      return interaction.reply({ content: '❌ No backups are available yet.', flags: 64 });
     }
 
     const options = backups.slice(0, 25).map(b =>
@@ -42,7 +42,7 @@ module.exports = {
     return interaction.reply({
       content: '📂 Select a backup to restore from:',
       components: [new ActionRowBuilder().addComponents(select)],
-      ephemeral: true,
+      flags: 64,
     });
   },
 

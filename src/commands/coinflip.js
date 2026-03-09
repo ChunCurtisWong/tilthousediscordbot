@@ -49,7 +49,7 @@ module.exports = {
       const secs = Math.ceil(remaining / 1000);
       return interaction.reply({
         content: `⏳ Wait **${secs}s** before placing another bet.`,
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -63,17 +63,17 @@ module.exports = {
     } else {
       bet = parseInt(amountStr, 10);
       if (isNaN(bet) || bet <= 0) {
-        return interaction.reply({ content: '❌ Enter a valid positive number or `all`.', ephemeral: true });
+        return interaction.reply({ content: '❌ Enter a valid positive number or `all`.', flags: 64 });
       }
     }
 
     if (bet < 10) {
-      return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', ephemeral: true });
+      return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', flags: 64 });
     }
     if (bet > balance) {
       return interaction.reply({
         content: `❌ You only have **${balance} 🪙** — you can't bet **${bet} 🪙**.`,
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -104,7 +104,7 @@ module.exports = {
     // Ephemeral balance reveal — only visible to the player
     await interaction.followUp({
       content: `Your new balance: **${newBalance} 🪙**`,
-      ephemeral: true,
+      flags: 64,
     });
   },
 };

@@ -137,7 +137,7 @@ module.exports = {
       if (existing) {
         return interaction.reply({
           content: `❌ There is already an active list (created by <@${existing.hostId}>). Use \`/th-list clear\` to remove it first.`,
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -153,7 +153,7 @@ module.exports = {
       const listData = { players, hostId: userId, messageId: null, channelId: null };
       storage.saveList(listData);
 
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       await refreshListEmbed(interaction, listData);
       storage.saveList(listData); // persist messageId + channelId
 
@@ -169,22 +169,22 @@ module.exports = {
       if (!listData) {
         return interaction.reply({
           content: '❌ No active list. Use `/th-list create` to start one.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
       const user = interaction.options.getUser('user');
       if (user.bot) {
-        return interaction.reply({ content: '❌ Cannot add bots to the list.', ephemeral: true });
+        return interaction.reply({ content: '❌ Cannot add bots to the list.', flags: 64 });
       }
       if (listData.players.find(p => p.userId === user.id)) {
-        return interaction.reply({ content: `❌ <@${user.id}> is already in the list.`, ephemeral: true });
+        return interaction.reply({ content: `❌ <@${user.id}> is already in the list.`, flags: 64 });
       }
 
       listData.players.push({ userId: user.id, username: user.username, joinedAt: Date.now() });
       storage.saveList(listData);
 
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       await refreshListEmbed(interaction, listData);
       return interaction.editReply({ content: `✅ Added <@${user.id}> to the list.` });
     }
@@ -193,7 +193,7 @@ module.exports = {
     if (sub === 'clear') {
       const listData = storage.getList();
       if (!listData) {
-        return interaction.reply({ content: '❌ No active list to clear.', ephemeral: true });
+        return interaction.reply({ content: '❌ No active list to clear.', flags: 64 });
       }
 
       const isHost = listData.hostId === userId;
@@ -201,7 +201,7 @@ module.exports = {
       if (!isHost && !isMod) {
         return interaction.reply({
           content: '❌ Only the list host or a moderator can clear the list.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -220,7 +220,7 @@ module.exports = {
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('✖️'),
         )],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -228,12 +228,12 @@ module.exports = {
     if (sub === 'status') {
       const listData = storage.getList();
       if (!listData) {
-        return interaction.reply({ content: '❌ There is no active list at the moment.', ephemeral: true });
+        return interaction.reply({ content: '❌ There is no active list at the moment.', flags: 64 });
       }
       return interaction.reply({
         embeds: [buildListEmbed(listData)],
         components: [buildListComponents()],
-        ephemeral: true,
+        flags: 64,
       });
     }
   },
@@ -245,10 +245,10 @@ module.exports = {
     const listData = storage.getList();
 
     if (!listData) {
-      return interaction.followUp({ content: '❌ No active list.', ephemeral: true });
+      return interaction.followUp({ content: '❌ No active list.', flags: 64 });
     }
     if (listData.players.find(p => p.userId === userId)) {
-      return interaction.followUp({ content: '❌ You are already in the list.', ephemeral: true });
+      return interaction.followUp({ content: '❌ You are already in the list.', flags: 64 });
     }
 
     listData.players.push({ userId, username, joinedAt: Date.now() });
@@ -256,7 +256,7 @@ module.exports = {
 
     // editReply on a deferUpdate-ed button interaction edits the button's own message (the list embed)
     await interaction.editReply({ embeds: [buildListEmbed(listData)], components: [buildListComponents()] });
-    return interaction.followUp({ content: '✅ You joined the list!', ephemeral: true });
+    return interaction.followUp({ content: '✅ You joined the list!', flags: 64 });
   },
 
   // ── Button: Leave List ────────────────────────────────────────────────────
@@ -266,17 +266,17 @@ module.exports = {
     const listData = storage.getList();
 
     if (!listData) {
-      return interaction.followUp({ content: '❌ No active list.', ephemeral: true });
+      return interaction.followUp({ content: '❌ No active list.', flags: 64 });
     }
     const idx = listData.players.findIndex(p => p.userId === userId);
     if (idx === -1) {
-      return interaction.followUp({ content: '❌ You are not in the list.', ephemeral: true });
+      return interaction.followUp({ content: '❌ You are not in the list.', flags: 64 });
     }
 
     listData.players.splice(idx, 1);
     storage.saveList(listData);
     await interaction.editReply({ embeds: [buildListEmbed(listData)], components: [buildListComponents()] });
-    return interaction.followUp({ content: '✅ You left the list.', ephemeral: true });
+    return interaction.followUp({ content: '✅ You left the list.', flags: 64 });
   },
 
   // ── Button: Confirm clear ─────────────────────────────────────────────────

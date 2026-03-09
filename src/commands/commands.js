@@ -62,6 +62,6 @@ module.exports = {
       .addFields(...PUBLIC_FIELDS)
       .setFooter({ text: 'Only visible to you' });
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: 64 });
   },
 };

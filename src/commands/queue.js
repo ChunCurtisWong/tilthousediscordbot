@@ -126,17 +126,17 @@ function parseTime(timeStr) {
 /**
  * Sends an ephemeral confirmation appropriate to the interaction type:
  *
- *  - Not deferred (slash command)  → reply({ ephemeral: true })
- *  - Button (deferred via deferUpdate) → followUp({ ephemeral: true })
+ *  - Not deferred (slash command)  → reply({ flags: 64 })
+ *  - Button (deferred via deferUpdate) → followUp({ flags: 64 })
  *  - Select menu or modal (deferred via deferUpdate / deferReply)
  *    → editReply({ components: [] })
  */
 function respond(interaction, opts) {
   if (!interaction.deferred) {
-    return interaction.reply({ ...opts, ephemeral: true });
+    return interaction.reply({ ...opts, flags: 64 });
   }
   if (interaction.isButton()) {
-    return interaction.followUp({ ...opts, ephemeral: true });
+    return interaction.followUp({ ...opts, flags: 64 });
   }
   return interaction.editReply({ ...opts, components: [] });
 }
@@ -494,13 +494,13 @@ module.exports = {
             content:
               '❌ Could not parse the time. Try formats like:\n' +
               '`7pm`  `7:30pm`  `19:00`  `2024-06-15T18:00:00Z`  `1718474400`',
-            ephemeral: true,
+            flags: 64,
           });
         }
         if (ts <= Math.floor(Date.now() / 1000)) {
           return interaction.reply({
             content: '❌ The scheduled time must be in the future.',
-            ephemeral: true,
+            flags: 64,
           });
         }
       }
@@ -508,11 +508,11 @@ module.exports = {
       if (minOpt !== null && maxOpt !== null && minOpt >= maxOpt) {
         return interaction.reply({
           content: '❌ `min_players` must be less than `max_players`.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       return processJoin(interaction, game, userId, username, {
         timeStr: timeStr || null,
         minOpt,
@@ -532,14 +532,14 @@ module.exports = {
       if (Object.keys(activeQueues).length === 0) {
         return interaction.reply({
           content: '❌ There are no active queues to join. Use `/th-queue create` to start one!',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
       return interaction.reply({
         content: '🎮 Choose a queue to join:',
         components: [buildActiveQueueSelectRow(activeQueues)],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -558,19 +558,19 @@ module.exports = {
       if (userQueues.length === 0) {
         return interaction.reply({
           content: '❌ You are not in any active queue.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
       if (userQueues.length === 1) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
         return processLeave(interaction, userQueues[0], userId);
       }
 
       return interaction.reply({
         content: '🚪 You are in multiple queues. Which one do you want to leave?',
         components: [buildUserQueueSelectRow(userQueues)],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -581,7 +581,7 @@ module.exports = {
       if (Object.keys(queues).length === 0) {
         return interaction.reply({
           content: '❌ There are no active queues at the moment.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -614,7 +614,7 @@ module.exports = {
       return interaction.reply({
         content: '📋 Select a queue to view its status:',
         components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -631,7 +631,7 @@ module.exports = {
         const reason = Object.keys(queues).length === 0
           ? 'No active queues to clear.'
           : '❌ You are not the host of any active queue and do not have moderator permissions.';
-        return interaction.reply({ content: reason, ephemeral: true });
+        return interaction.reply({ content: reason, flags: 64 });
       }
 
       const options = clearable.slice(0, 25).map(([name, q]) => {
@@ -661,7 +661,7 @@ module.exports = {
       return interaction.reply({
         content: '🗑️ Select a queue to clear:',
         components: [new ActionRowBuilder().addComponents(select)],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -671,7 +671,7 @@ module.exports = {
       if (!isMod) {
         return interaction.reply({
           content: '❌ Only moderators (Manage Channels permission) can clear all queues.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -679,13 +679,13 @@ module.exports = {
       const count = Object.keys(queues).length;
 
       if (count === 0) {
-        return interaction.reply({ content: '❌ There are no active queues to clear.', ephemeral: true });
+        return interaction.reply({ content: '❌ There are no active queues to clear.', flags: 64 });
       }
 
       return interaction.reply({
         content: `⚠️ Are you sure you want to clear **all ${count} active queue${count !== 1 ? 's' : ''}**? This cannot be undone.`,
         components: [buildClearAllConfirmRow()],
-        ephemeral: true,
+        flags: 64,
       });
     }
   },

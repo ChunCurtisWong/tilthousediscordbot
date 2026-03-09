@@ -22,7 +22,7 @@ module.exports = {
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.reply({
         content: '❌ Only administrators can use this command.',
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -30,7 +30,7 @@ module.exports = {
     const amount = interaction.options.getInteger('amount');
 
     if (target.bot) {
-      return interaction.reply({ content: '❌ Cannot give Trinkets to a bot.', ephemeral: true });
+      return interaction.reply({ content: '❌ Cannot give Trinkets to a bot.', flags: 64 });
     }
 
     const newBalance = await addTrinkets(target.id, amount, target.username);

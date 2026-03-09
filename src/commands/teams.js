@@ -86,7 +86,7 @@ function parseCustomSizes(raw) {
 async function doTeams(interaction, sizes, isDeferred) {
   const listData = storage.getList();
   if (!listData || listData.players.length === 0) {
-    const errPayload = { content: '❌ The active list is now empty.', ephemeral: true };
+    const errPayload = { content: '❌ The active list is now empty.', flags: 64 };
     return isDeferred ? interaction.editReply(errPayload) : interaction.reply(errPayload);
   }
 
@@ -96,7 +96,7 @@ async function doTeams(interaction, sizes, isDeferred) {
   if (sum !== total) {
     const errPayload = {
       content: `❌ Team sizes sum to **${sum}** but the list has **${total}** player${total !== 1 ? 's' : ''}. Adjust the numbers so they total ${total}.`,
-      ephemeral: true,
+      flags: 64,
     };
     return isDeferred ? interaction.editReply(errPayload) : interaction.reply(errPayload);
   }
@@ -189,7 +189,7 @@ module.exports = {
     if (!listData || listData.players.length === 0) {
       return interaction.reply({
         content: '❌ The active list is empty or there is no active list.',
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -205,7 +205,7 @@ module.exports = {
       if (!sizes) {
         return interaction.reply({
           content: '❌ Custom sizes must be positive integers separated by commas (e.g. `2,5,3`).',
-          ephemeral: true,
+          flags: 64,
         });
       }
       return doTeams(interaction, sizes, false);
@@ -245,7 +245,7 @@ module.exports = {
     return interaction.reply({
       content: `📋 **${total} player${total !== 1 ? 's' : ''}** in the list. How would you like to split them?`,
       components: [new ActionRowBuilder().addComponents(select)],
-      ephemeral: true,
+      flags: 64,
     });
   },
 
@@ -262,11 +262,11 @@ module.exports = {
     const raw = interaction.fields.getTextInputValue('value').trim();
     const size = parseInt(raw, 10);
     if (isNaN(size) || size < 1) {
-      return interaction.reply({ content: '❌ Players per team must be a positive number.', ephemeral: true });
+      return interaction.reply({ content: '❌ Players per team must be a positive number.', flags: 64 });
     }
     const listData = storage.getList();
     if (!listData || listData.players.length === 0) {
-      return interaction.reply({ content: '❌ The active list is now empty.', ephemeral: true });
+      return interaction.reply({ content: '❌ The active list is now empty.', flags: 64 });
     }
     const total = listData.players.length;
     const numTeams = Math.ceil(total / size);
@@ -279,11 +279,11 @@ module.exports = {
     const raw = interaction.fields.getTextInputValue('value').trim();
     const count = parseInt(raw, 10);
     if (isNaN(count) || count < 2) {
-      return interaction.reply({ content: '❌ Number of teams must be at least 2.', ephemeral: true });
+      return interaction.reply({ content: '❌ Number of teams must be at least 2.', flags: 64 });
     }
     const listData = storage.getList();
     if (!listData || listData.players.length === 0) {
-      return interaction.reply({ content: '❌ The active list is now empty.', ephemeral: true });
+      return interaction.reply({ content: '❌ The active list is now empty.', flags: 64 });
     }
     const total = listData.players.length;
     const numTeams = Math.min(count, total);
@@ -298,7 +298,7 @@ module.exports = {
     if (!sizes) {
       return interaction.reply({
         content: '❌ Custom sizes must be positive integers separated by commas (e.g. `2,5,3`).',
-        ephemeral: true,
+        flags: 64,
       });
     }
     await interaction.deferReply();

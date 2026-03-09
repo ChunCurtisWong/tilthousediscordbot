@@ -8,7 +8,7 @@ async function safeError(interaction, err, label) {
     stack: err.stack,
     userId: interaction.user.id,
   });
-  const msg = { content: '❌ An error occurred.', ephemeral: true };
+  const msg = { content: '❌ An error occurred.', flags: 64 };
   if (interaction.replied || interaction.deferred) {
     await interaction.followUp(msg).catch(() => {});
   } else {
@@ -30,7 +30,7 @@ module.exports = {
           userId: interaction.user.id,
           guildId: interaction.guildId,
         });
-        return interaction.reply({ content: '❌ Unknown command.', ephemeral: true });
+        return interaction.reply({ content: '❌ Unknown command.', flags: 64 });
       }
 
       logger.info(`Command: /${interaction.commandName}`, {
@@ -50,7 +50,7 @@ module.exports = {
           userId: interaction.user.id,
           guildId: interaction.guildId,
         });
-        const errorMsg = { content: '❌ An error occurred while executing this command.', ephemeral: true };
+        const errorMsg = { content: '❌ An error occurred while executing this command.', flags: 64 };
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp(errorMsg).catch(() => {});
         } else {
