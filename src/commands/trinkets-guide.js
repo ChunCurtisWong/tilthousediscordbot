@@ -14,7 +14,8 @@ module.exports = {
           name: '💰 What are Trinkets?',
           value:
             'Trinkets are the server currency for Tilthouse Bot. ' +
-            'Earn them by playing games and showing up, then flex your wealth on the leaderboard — or gamble it all away. Your call.',
+            'Earn them by daily check-ins and queuing up for games. ' +
+            "There's also the option to gamba it all away. Up to you!",
         },
         {
           name: '📈 How to Earn Trinkets',
