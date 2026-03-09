@@ -1,17 +1,13 @@
-# Claude Code Instructions 
- 
-## Branch Policy 
-- Always commit and push directly to main branch 
-- Never create new branches 
-- Never open pull requests 
-- The only branch in this project is main 
- 
-## Project Context 
-This is a personal Discord bot for a small friend group server. Solo developer, no code review process needed. All changes should go directly to main. 
- 
-- Always commit and push directly to main branch 
-- Never create new branches 
-- Never open pull requests 
-- The only branch in this project is main 
- 
-This is a personal Discord bot for a small friend group server. Solo developer, no code review process needed. All changes should go directly to main. 
+# Claude Code Instructions
+
+## IMPORTANT — Git Workflow
+- ALWAYS push directly to main
+- NEVER create new branches under any circumstances
+- NEVER use claude/ prefix for branches
+- NEVER open pull requests
+- If you are about to create a branch, stop and push to main instead
+- The command to push is always: git push origin main
+
+## Project Context
+This is a personal Discord bot for a small friend 
+group server. Solo developer, no code review needed.
