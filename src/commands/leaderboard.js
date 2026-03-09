@@ -14,7 +14,7 @@ module.exports = {
     if (top.length === 0) {
       return interaction.reply({
         content: '❌ No Trinket data yet. Claim your `/th-daily` to get started!',
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -29,6 +29,6 @@ module.exports = {
       .setDescription(lines.join('\n'))
       .setFooter({ text: 'Top 3 players by Trinket balance' });
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: 64 });
   },
 };

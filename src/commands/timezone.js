@@ -67,7 +67,7 @@ module.exports = {
           content:
             `❌ \`${tz}\` is not a valid IANA timezone.\n` +
             'Try values like `America/New_York`, `Europe/London`, or `Asia/Tokyo`.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -90,7 +90,7 @@ module.exports = {
         .setFooter({ text: `Saved for ${username}` })
         .setTimestamp();
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], flags: 64 });
     }
 
     // ── /timezone view ──────────────────────────────────────────────
@@ -102,7 +102,7 @@ module.exports = {
           content:
             "❌ You haven't set a timezone yet.\n" +
             'Use `/th-timezone set [timezone]` to register one.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -121,7 +121,7 @@ module.exports = {
         )
         .setTimestamp();
 
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], flags: 64 });
     }
   },
 };

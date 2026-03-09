@@ -110,4 +110,28 @@ function buildQueueComponents(game) {
   );
 }
 
-module.exports = { buildQueueEmbed, buildQueueComponents };
+/**
+ * Builds a closed-state embed for a queue that has ended.
+ */
+function buildClosedQueueEmbed(game) {
+  return new EmbedBuilder()
+    .setColor('#888888')
+    .setTitle(`⏹️ ${game} — Queue Closed`)
+    .setDescription('This queue has closed and is no longer accepting players.')
+    .setTimestamp();
+}
+
+/**
+ * Returns an ActionRow with a single disabled "Queue Closed" button.
+ */
+function buildClosedQueueComponents() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('q:closed')
+      .setLabel('Queue Closed')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+  );
+}
+
+module.exports = { buildQueueEmbed, buildQueueComponents, buildClosedQueueEmbed, buildClosedQueueComponents };

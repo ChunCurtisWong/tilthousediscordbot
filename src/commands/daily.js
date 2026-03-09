@@ -22,7 +22,7 @@ module.exports = {
           `You already claimed your daily reward.\n` +
           `Come back <t:${resetTs}:R> (resets at **7pm ET** daily).`
         );
-      return interaction.reply({ embeds: [embed], ephemeral: true });
+      return interaction.reply({ embeds: [embed], flags: 64 });
     }
 
     logger.info('Daily claimed', { userId, username, streak: result.newStreak, reward: result.reward });
@@ -46,6 +46,6 @@ module.exports = {
       )
       .setFooter({ text: 'Resets daily at 7pm ET. Miss a window and your streak resets.' });
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: 64 });
   },
 };

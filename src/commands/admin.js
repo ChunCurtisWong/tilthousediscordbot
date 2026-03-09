@@ -46,6 +46,6 @@ module.exports = {
         '`/th-admin` — View all commands including admin commands'
       );
 
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({ embeds: [embed], flags: 64 });
   },
 };

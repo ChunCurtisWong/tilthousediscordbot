@@ -14,7 +14,7 @@ module.exports = {
     if (!listData || listData.players.length === 0) {
       return interaction.reply({
         content: '❌ The active list is empty or there is no active list.',
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -45,7 +45,7 @@ module.exports = {
     await interaction.followUp({
       content: `Remove **${picked.username}** from the list?`,
       components: [row],
-      ephemeral: true,
+      flags: 64,
     });
   },
 

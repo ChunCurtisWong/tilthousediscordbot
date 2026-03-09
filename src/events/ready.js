@@ -5,7 +5,7 @@ const { startTrinketBackups }  = require('../utils/trinkets');
 const { runStartupCheck }      = require('../utils/startupCheck');
 
 module.exports = {
-  name: 'ready',
+  name: 'clientReady',
   once: true,
   execute(client) {
     logger.info(`Bot online — logged in as ${client.user.tag} (${client.user.id})`);

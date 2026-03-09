@@ -1,13 +1,37 @@
 const { EmbedBuilder } = require('discord.js');
 const logger  = require('./logger');
 const storage = require('./storage');
-const { payoutQueue, getNextDailyReset } = require('./trinkets');
+const { payoutQueue } = require('./trinkets');
+const { buildClosedQueueEmbed, buildClosedQueueComponents } = require('./embeds');
 
-// Timed queues close 30 minutes after their scheduled session start
+// Case A: timed queues close 30 minutes after scheduled start
 const QUEUE_CLOSE_OFFSET = 1800; // seconds
 
-// No-time queues auto-close after 3 hours of inactivity
+// Fallback inactivity timeout for no-time queues (3 hours)
 const INACTIVITY_TIMEOUT = 10_800; // seconds
+
+// Case B / C: 30-minute window after threshold/fulfilled before close
+const WINDOW_DURATION = 1800; // seconds
+
+// Case C: host prompt auto-expires after 5 minutes → Extend applied
+const HOST_PROMPT_EXPIRY = 300; // seconds
+
+// ─── Mark the original queue embed as closed ──────────────────────────────────
+
+async function markQueueEmbedClosed(client, game, queueData) {
+  if (!queueData.messageId || !queueData.channelId) return;
+  try {
+    const ch  = await client.channels.fetch(queueData.channelId);
+    const msg = await ch.messages.fetch(queueData.messageId);
+    await msg.edit({
+      content: null,
+      embeds: [buildClosedQueueEmbed(game)],
+      components: [buildClosedQueueComponents()],
+    });
+  } catch {
+    // Message deleted or inaccessible — ignore
+  }
+}
 
 // ─── Shared close notification ────────────────────────────────────────────────
 
@@ -36,201 +60,219 @@ async function sendCloseNotification(client, channelId, game, payoutResult) {
     } else {
       description = `The **${game}** queue has closed.`;
     }
-    try {
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#888888')
-            .setTitle(`⏹️ Queue Closed: ${game}`)
-            .setDescription(description)
-            .setTimestamp(),
-        ],
-      });
-    } catch (err) {
-      logger.error('sendCloseNotification: failed to send no-payout message', { game, error: err.message });
-    }
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#888888')
+          .setTitle(`⏹️ Queue Closed: ${game}`)
+          .setDescription(description)
+          .setTimestamp(),
+      ],
+    }).catch(err => logger.error('sendCloseNotification: failed to send no-payout embed', { game, error: err.message }));
     return;
   }
 
-  const { playerPayouts, fillPayouts, ineligible } = payoutResult;
+  const { playerPayouts, fillPayouts } = payoutResult;
   const payoutLines = [
     ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
     ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
   ];
 
   if (payoutLines.length > 0) {
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#FFD700')
+          .setTitle('🪙 Trinket Payout')
+          .setDescription(`**${game}** queue closed — Trinkets awarded!\n\n${payoutLines.join('\n')}`),
+      ],
+    }).catch(err => logger.error('sendCloseNotification: failed to send payout embed', { game, error: err.message }));
+  }
+}
+
+// ─── Close a queue with optional payout ──────────────────────────────────────
+
+async function closeQueue(client, game, queueData, { withPayout = false, reason = 'default' } = {}) {
+  logger.info('Closing queue', { game, withPayout, reason });
+
+  await markQueueEmbedClosed(client, game, queueData);
+  storage.deleteQueue(game);
+
+  if (!queueData.channelId) return;
+
+  let channel;
+  try {
+    channel = await client.channels.fetch(queueData.channelId);
+  } catch (err) {
+    logger.error('closeQueue: could not fetch channel', { game, error: err.message });
+    return;
+  }
+
+  if (!withPayout) {
+    const descriptions = {
+      offline:    `The **${game}** queue was closed while the bot was offline. No Trinkets were awarded.`,
+      inactivity: `The **${game}** queue has closed due to inactivity.`,
+      default:    `The **${game}** queue has closed.`,
+    };
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#888888')
+          .setTitle(`⏹️ Queue Closed: ${game}`)
+          .setDescription(descriptions[reason] ?? descriptions.default)
+          .setTimestamp(),
+      ],
+    }).catch(() => {});
+    return;
+  }
+
+  // Only fill players who joined during the close window earn Trinkets
+  const windowStartSec = queueData.thresholdHitAt ?? queueData.fulfilledAt ?? queueData.scheduledTime;
+  const windowStartMs  = windowStartSec ? windowStartSec * 1000 : 0;
+  const filteredData   = {
+    ...queueData,
+    fill: (queueData.fill ?? []).filter(p => p.joinedAt >= windowStartMs),
+  };
+
+  const payoutResult = await payoutQueue(filteredData);
+  await sendCloseNotification(client, queueData.channelId, game, payoutResult);
+}
+
+// ─── Expire an active host prompt (auto-extend on timeout) ────────────────────
+
+async function expireHostPrompt(client, game, queueData) {
+  if (queueData.channelId && queueData.hostPromptMessageId) {
     try {
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#FFD700')
-            .setTitle('🪙 Trinket Payout')
-            .setDescription(`**${game}** queue closed — Trinkets awarded!\n\n${payoutLines.join('\n')}`),
-        ],
+      const ch  = await client.channels.fetch(queueData.channelId);
+      const msg = await ch.messages.fetch(queueData.hostPromptMessageId);
+      await msg.edit({
+        content: '⏰ Host prompt expired — **Extend** applied automatically.',
+        components: [],
       });
-    } catch (err) {
-      logger.error('sendCloseNotification: failed to send payout embed', { game, error: err.message });
-    }
+    } catch { /* Message gone — fine */ }
   }
 
-  // DM eligible players
-  for (const p of [...playerPayouts, ...fillPayouts]) {
-    try {
-      const user = await client.users.fetch(p.userId);
-      await user.send(`You earned **+${p.amount} 🪙** from the **${game}** queue! 🪙`);
-    } catch { /* DMs may be disabled */ }
-  }
-
-  // DM ineligible players (daily limit already hit)
-  const resetTs = Math.floor(getNextDailyReset() / 1000);
-  for (const p of ineligible) {
-    try {
-      const user = await client.users.fetch(p.userId);
-      await user.send(
-        `You joined the **${game}** queue but you've already earned your queue Trinkets for today. ` +
-          `They reset <t:${resetTs}:R> — join a queue after that to earn more! 🪙`
-      );
-    } catch { /* DMs may be disabled */ }
-  }
+  // Push lastActivityAt forward by 30 minutes
+  queueData.lastActivityAt = (queueData.lastActivityAt ?? Date.now()) + WINDOW_DURATION * 1000;
+  queueData.hostPromptMessageId = null;
+  storage.saveQueue(game, queueData);
 }
 
 // ─── Single queue-check pass ──────────────────────────────────────────────────
 
-/**
- * Runs one pass over all active queues.
- *
- * isStartup = true:
- *  - Timed queues that already passed their close time are closed immediately
- *    with a "closed while offline" message and NO Trinket payout.
- *  - Reminder pings are NOT sent (avoids late / duplicate reminders).
- *  - Inactivity-expired no-time queues are closed normally (same message).
- *
- * isStartup = false (normal 60s interval):
- *  - Standard behaviour: reminders, payouts, cleanup.
- */
 async function runQueueCheck(client, isStartup = false) {
   const queues = storage.getQueues();
   const now    = Math.floor(Date.now() / 1000);
 
   for (const [game, queueData] of Object.entries(queues)) {
-    const { scheduledTime, channelId } = queueData;
+    const { scheduledTime, min, max, thresholdHitAt, fulfilledAt, channelId } = queueData;
 
-    // ── No-time queues: inactivity auto-close ───────────────────────
-    if (!scheduledTime) {
-      const lastActivity = queueData.lastActivityAt
-        ? Math.floor(queueData.lastActivityAt / 1000)
-        : null;
+    // ── CASE A: Scheduled time set ───────────────────────────────────
+    if (scheduledTime) {
+      const closeTime = scheduledTime + QUEUE_CLOSE_OFFSET;
+      const timeUntil = scheduledTime - now;
 
-      if (lastActivity !== null && now - lastActivity > INACTIVITY_TIMEOUT) {
-        logger.info('Queue closed due to inactivity', { game, isStartup });
-        storage.deleteQueue(game);
+      // 10-minute reminder (skip on startup)
+      if (!isStartup && !queueData.reminderSent && timeUntil <= 600 && timeUntil > 0) {
+        queueData.reminderSent = true;
+        storage.saveQueue(game, queueData);
 
         if (channelId) {
           try {
-            const ch = await client.channels.fetch(channelId);
+            const ch       = await client.channels.fetch(channelId);
+            const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
+            const minLeft  = Math.ceil(timeUntil / 60);
             await ch.send({
+              content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`,
               embeds: [
                 new EmbedBuilder()
-                  .setColor('#888888')
-                  .setTitle(`⏹️ Queue Closed: ${game}`)
-                  .setDescription(`The **${game}** queue has closed due to inactivity.`)
-                  .setTimestamp(),
-              ],
-            });
-          } catch (err) {
-            logger.error('Failed to send inactivity close message', { game, error: err.message });
-          }
-        }
-      }
-      continue;
-    }
-
-    // ── Timed queues ────────────────────────────────────────────────
-    const { reminderSent, payoutSent } = queueData;
-    const closeTime = scheduledTime + QUEUE_CLOSE_OFFSET;
-    const timeUntil = scheduledTime - now;
-
-    // 10-minute reminder (skip on startup to avoid late/duplicate pings)
-    if (!isStartup && !reminderSent && timeUntil <= 600 && timeUntil > 0) {
-      logger.info('Reminder checker: sending reminder', { game, secondsUntil: timeUntil });
-
-      queueData.reminderSent = true;
-      storage.saveQueue(game, queueData);
-
-      if (!channelId) {
-        logger.warn('Reminder checker: skipping reminder — channelId is null', { game });
-      } else {
-        const pingList    = queueData.players?.map(p => `<@${p.userId}>`).join(' ') || '';
-        const minutesLeft = Math.ceil(timeUntil / 60);
-
-        try {
-          const ch = await client.channels.fetch(channelId);
-          await ch.send({
-            content: `${pingList}\n⏰ **${game}** starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`,
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#FFD700')
-                .setTitle(`⏰ Reminder: ${game} starts in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}!`)
-                .setDescription(
-                  `**Session Time:** <t:${scheduledTime}:F>\n` +
-                    `Starts <t:${scheduledTime}:R>.\n\n` +
-                    `The queue stays open for **30 minutes** after start time.`
-                )
-                .setTimestamp(),
-            ],
-          });
-          logger.info('Reminder checker: reminder sent', { game, scheduledTime });
-        } catch (err) {
-          logger.error('Reminder checker: failed to send reminder', { game, error: err.message });
-        }
-      }
-    }
-
-    // Natural close: 30 minutes after scheduled start
-    if (!payoutSent && closeTime <= now) {
-      queueData.payoutSent = true;
-      storage.saveQueue(game, queueData);
-
-      if (isStartup) {
-        // Closed while the bot was offline — no Trinket payout
-        logger.info('Queue expired while bot was offline — closing without payout', { game, closeTime });
-        if (!channelId) {
-          logger.warn('Offline-close: skipping channel message — channelId is null', { game });
-        } else {
-          try {
-            const ch = await client.channels.fetch(channelId);
-            await ch.send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor('#888888')
-                  .setTitle(`⏹️ Queue Closed: ${game}`)
+                  .setColor('#FFD700')
+                  .setTitle(`⏰ Reminder: ${game} starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
                   .setDescription(
-                    `The **${game}** queue was closed while the bot was offline. ` +
-                      `No Trinkets were awarded.`
+                    `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
+                    `The queue stays open for **30 minutes** after start time.`
                   )
                   .setTimestamp(),
               ],
             });
+            logger.info('Reminder sent', { game, scheduledTime });
           } catch (err) {
-            logger.error('Failed to send offline-close message', { game, error: err.message });
+            logger.error('Failed to send reminder', { game, error: err.message });
           }
         }
-      } else {
-        // Normal close with payout
-        logger.info('Queue closed naturally (timed)', { game, closeTime });
-        try {
-          const payoutResult = await payoutQueue(queueData);
-          await sendCloseNotification(client, channelId, game, payoutResult);
-        } catch (err) {
-          logger.error('Error during timed queue close', { game, error: err.message });
-        }
+      }
+
+      // Close 30 minutes after scheduled start
+      if (!queueData.payoutSent && closeTime <= now) {
+        queueData.payoutSent = true;
+        storage.saveQueue(game, queueData);
+        await closeQueue(client, game, queueData, {
+          withPayout: !isStartup,
+          reason: isStartup ? 'offline' : 'default',
+        });
+      }
+
+      // Remove from storage 1 hour after close
+      if (closeTime < now - 3600) storage.deleteQueue(game);
+      continue;
+    }
+
+    // ── CASE B: Has min or max, threshold hit ────────────────────────
+    if (thresholdHitAt !== null) {
+      const windowEnd = thresholdHitAt + WINDOW_DURATION;
+
+      if (!queueData.payoutSent && windowEnd <= now) {
+        queueData.payoutSent = true;
+        storage.saveQueue(game, queueData);
+        await closeQueue(client, game, queueData, {
+          withPayout: !isStartup,
+          reason: isStartup ? 'offline' : 'default',
+        });
+      }
+
+      if (queueData.payoutSent && windowEnd < now - 3600) storage.deleteQueue(game);
+      continue;
+    }
+
+    // ── CASE C: No time, no threshold — fulfilled countdown ──────────
+    if (fulfilledAt !== null) {
+      const windowEnd = fulfilledAt + WINDOW_DURATION;
+
+      if (!queueData.payoutSent && windowEnd <= now) {
+        queueData.payoutSent = true;
+        storage.saveQueue(game, queueData);
+        await closeQueue(client, game, queueData, {
+          withPayout: !isStartup,
+          reason: isStartup ? 'offline' : 'default',
+        });
+      }
+
+      if (queueData.payoutSent && windowEnd < now - 3600) storage.deleteQueue(game);
+      continue;
+    }
+
+    // ── CASE C / B fallback: waiting for threshold or fulfilled ──────
+
+    // Expire host prompt after 5 minutes → auto-extend
+    if (!isStartup && min === null && max === null && queueData.hostPromptMessageId) {
+      const promptSentSec = queueData.lastHostPromptAt
+        ? Math.floor(queueData.lastHostPromptAt / 1000)
+        : null;
+      if (promptSentSec !== null && now - promptSentSec > HOST_PROMPT_EXPIRY) {
+        await expireHostPrompt(client, game, queueData);
+        const updated = storage.getQueue(game);
+        Object.assign(queueData, updated);
       }
     }
 
-    // Cleanup: 1 hour after natural close
-    if (closeTime < now - 3600) {
-      logger.info('Removing closed queue from storage', { game });
-      storage.deleteQueue(game);
+    // Inactivity close: 3h with no new joins
+    const lastActivity = queueData.lastActivityAt
+      ? Math.floor(queueData.lastActivityAt / 1000)
+      : null;
+
+    if (lastActivity !== null && now - lastActivity > INACTIVITY_TIMEOUT) {
+      logger.info('Queue closed due to inactivity', { game, isStartup });
+      await closeQueue(client, game, queueData, { withPayout: false, reason: 'inactivity' });
     }
   }
 }
@@ -239,14 +281,10 @@ async function runQueueCheck(client, isStartup = false) {
 
 function startReminderChecker(client) {
   logger.info('Reminder checker: started (interval: 60s)');
-
-  // Immediately process any queues that expired while the bot was offline
   runQueueCheck(client, true).catch(err =>
     logger.error('Startup queue check failed', { error: err.message })
   );
-
-  // Then poll every 60 seconds
   setInterval(() => runQueueCheck(client), 60_000);
 }
 
-module.exports = { startReminderChecker, sendCloseNotification };
+module.exports = { startReminderChecker, sendCloseNotification, markQueueEmbedClosed };

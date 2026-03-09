@@ -8,7 +8,7 @@ async function safeError(interaction, err, label) {
     stack: err.stack,
     userId: interaction.user.id,
   });
-  const msg = { content: '❌ An error occurred.', ephemeral: true };
+  const msg = { content: '❌ An error occurred.', flags: 64 };
   if (interaction.replied || interaction.deferred) {
     await interaction.followUp(msg).catch(() => {});
   } else {
@@ -30,7 +30,7 @@ module.exports = {
           userId: interaction.user.id,
           guildId: interaction.guildId,
         });
-        return interaction.reply({ content: '❌ Unknown command.', ephemeral: true });
+        return interaction.reply({ content: '❌ Unknown command.', flags: 64 });
       }
 
       logger.info(`Command: /${interaction.commandName}`, {
@@ -50,7 +50,7 @@ module.exports = {
           userId: interaction.user.id,
           guildId: interaction.guildId,
         });
-        const errorMsg = { content: '❌ An error occurred while executing this command.', ephemeral: true };
+        const errorMsg = { content: '❌ An error occurred while executing this command.', flags: 64 };
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp(errorMsg).catch(() => {});
         } else {
@@ -79,6 +79,18 @@ module.exports = {
           } else if (customId.startsWith('q:clear_all:')) {
             logger.info('Button: queue clear-all confirm', { customId, userId: interaction.user.id });
             await queueCmd.handleClearAllButton(interaction);
+          } else if (customId.startsWith('q:host_fulfilled:')) {
+            const game = customId.slice('q:host_fulfilled:'.length);
+            logger.info('Button: host fulfilled', { game, userId: interaction.user.id });
+            await queueCmd.handleHostFulfilled(interaction, game);
+          } else if (customId.startsWith('q:host_extend:')) {
+            const game = customId.slice('q:host_extend:'.length);
+            logger.info('Button: host extend', { game, userId: interaction.user.id });
+            await queueCmd.handleHostExtend(interaction, game);
+          } else if (customId.startsWith('q:host_clear:')) {
+            const game = customId.slice('q:host_clear:'.length);
+            logger.info('Button: host clear', { game, userId: interaction.user.id });
+            await queueCmd.handleHostClear(interaction, game);
           }
 
         // Gambling buttons
