@@ -69,6 +69,7 @@ module.exports = {
             '`/th-restore` — Restore Trinket data from a backup',
             '`/th-health` — Run a full system health check',
             '`/th-roles` — Post the reaction role embed in #roles',
+            '`/th-admin` — View all commands including admin commands',
           ].join('\n'),
         },
       )
