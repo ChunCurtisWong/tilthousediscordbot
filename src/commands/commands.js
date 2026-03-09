@@ -46,6 +46,7 @@ const PUBLIC_FIELDS = [
       '`/th-trinkets` — View your Trinkets balance and streak',
       '`/th-leaderboard` — View the top 3 Trinket holders',
       '`/th-bet @user amount` — Challenge a user to a Trinket duel',
+      '`/th-trinkets-guide` — Learn about the Trinkets system',
     ].join('\n'),
   },
 ];
