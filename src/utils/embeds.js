@@ -63,7 +63,7 @@ function buildQueueEmbed(game, queueData) {
       name: `👥 Players (${count})`,
       value:
         players.length > 0
-          ? players.map((p, i) => `${i + 1}. <@${p.userId}>`).join('\n')
+          ? players.map(p => `• <@${p.userId}>`).join('\n')
           : '*No players yet — be the first!*',
       inline: false,
     });
