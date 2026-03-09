@@ -68,8 +68,15 @@ function getQueue(game) {
     max: null,
     scheduledTime: null,
     reminderSent: false,
+    payoutSent: false,
     messageId: null,
     channelId: null,
+    roleId: null,
+    lastActivityAt: null,
+    thresholdHitAt: null,
+    fulfilledAt: null,
+    lastHostPromptAt: null,
+    hostPromptMessageId: null,
   };
 }
 

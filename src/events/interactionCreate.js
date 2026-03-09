@@ -79,6 +79,18 @@ module.exports = {
           } else if (customId.startsWith('q:clear_all:')) {
             logger.info('Button: queue clear-all confirm', { customId, userId: interaction.user.id });
             await queueCmd.handleClearAllButton(interaction);
+          } else if (customId.startsWith('q:host_fulfilled:')) {
+            const game = customId.slice('q:host_fulfilled:'.length);
+            logger.info('Button: host fulfilled', { game, userId: interaction.user.id });
+            await queueCmd.handleHostFulfilled(interaction, game);
+          } else if (customId.startsWith('q:host_extend:')) {
+            const game = customId.slice('q:host_extend:'.length);
+            logger.info('Button: host extend', { game, userId: interaction.user.id });
+            await queueCmd.handleHostExtend(interaction, game);
+          } else if (customId.startsWith('q:host_clear:')) {
+            const game = customId.slice('q:host_clear:'.length);
+            logger.info('Button: host clear', { game, userId: interaction.user.id });
+            await queueCmd.handleHostClear(interaction, game);
           }
 
         // Gambling buttons
