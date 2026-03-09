@@ -2,7 +2,6 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { claimDaily, streakReward } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const STREAK_BARS = ['▱▱▱▱▱', '▰▱▱▱▱', '▰▰▱▱▱', '▰▰▰▱▱', '▰▰▰▰▱', '▰▰▰▰▰'];
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -27,25 +26,23 @@ module.exports = {
 
     logger.info('Daily claimed', { userId, username, streak: result.newStreak, reward: result.reward });
 
-    const streakIdx = Math.min(result.newStreak, 5);
-    const bar       = STREAK_BARS[streakIdx];
-    const isMax     = result.newStreak >= 5;
+    const streakLabel = result.newStreak >= 5
+      ? `Day ${result.newStreak} 🔥 (max)`
+      : `Day ${result.newStreak} 🔥`;
 
     const embed = new EmbedBuilder()
       .setColor('#FFD700')
-      .setTitle('🪙 Daily Reward Claimed!')
+      .setTitle('🪙 Daily Claimed!')
+      .setDescription(`<@${userId}> has claimed their daily Trinkets!`)
       .addFields(
-        { name: '💰 Reward', value: `**+${result.reward} Trinkets**`, inline: true },
-        { name: '🏦 New Balance', value: `**${result.newBalance.toLocaleString()} 🪙**`, inline: true },
-        {
-          name: `🔥 Streak — Day ${result.newStreak} ${bar}`,
-          value: isMax
-            ? '**Maximum streak reached!** (+300 🪙 per day)'
-            : `Day ${result.newStreak + 1} reward: **${result.nextReward} 🪙** — come back after 7pm ET to keep your streak!`,
-        },
-      )
-      .setFooter({ text: 'Resets daily at 7pm ET. Miss a window and your streak resets.' });
+        { name: 'Trinkets Earned', value: `+${result.reward} Trinkets`, inline: true },
+        { name: 'Streak', value: streakLabel, inline: true },
+      );
 
-    return interaction.reply({ embeds: [embed], flags: 64 });
+    await interaction.deferReply({ flags: 64 });
+    await interaction.deleteReply();
+
+    const msg = await interaction.channel.send({ embeds: [embed] });
+    setTimeout(() => msg.delete().catch(() => {}), 5 * 60 * 1000);
   },
 };
