@@ -40,10 +40,6 @@ const PUBLIC_FIELDS = [
     ].join('\n'),
   },
   {
-    name: '🌐 Server',
-    value: '`/th-roles` — React to assign yourself a game role',
-  },
-  {
     name: '🪙 Trinkets',
     value: [
       '`/th-daily` — Claim your daily Trinkets reward (streak bonuses!)',
