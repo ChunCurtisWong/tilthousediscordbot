@@ -8,7 +8,8 @@ const logger  = require('../utils/logger');
 const storage = require('../utils/storage');
 const {
   buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
-  buildReadyStatusEmbed, buildSessionSummaryEmbed, buildSessionFillRow,
+  buildReadyStatusEmbed, buildSessionPromptRow, buildSessionNoOptionsRow,
+  buildSessionSummaryEmbed, buildSessionFillRow,
   buildClosedQueueEmbed, buildClosedQueueComponents,
 } = require('../utils/embeds');
 const { payoutQueue }  = require('../utils/trinkets');
@@ -839,17 +840,23 @@ module.exports = {
 
   // ── Edit Queue modal submit ─────────────────────────────────────
   async handleEditModalSubmit(interaction, game) {
+    await interaction.deferReply({ flags: 64 });
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players?.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can edit the queue.', flags: 64 });
+      return interaction.editReply({ content: '❌ Only the queue host can edit the queue.' });
     }
 
     const newGame  = interaction.fields.getTextInputValue('game_name').trim() || game;
     const rawTime  = interaction.fields.getTextInputValue('scheduled_time').trim();
     const rawMin   = interaction.fields.getTextInputValue('min_players').trim();
     const rawMax   = interaction.fields.getTextInputValue('max_players').trim();
+
+    // Track whether a ready-up message is active before applying changes
+    const oldReadyMessageId = queueData.readyMessageId;
+    const hadReadyMessage   = !!oldReadyMessageId;
+    const channelId         = queueData.channelId;
 
     // Apply scheduled time
     if (rawTime !== '') {
@@ -863,9 +870,8 @@ module.exports = {
         const hostTZ = storage.getUserTimezone(userId) ?? 'America/New_York';
         const ts = parseNaturalTimeInTZ(rawTime, hostTZ);
         if (!ts) {
-          return interaction.reply({
+          return interaction.editReply({
             content: '❌ Could not parse the time. Try formats like `7pm`, `7:30pm`, or `19:30`.',
-            flags: 64,
           });
         }
         queueData.scheduledTime     = ts;
@@ -880,7 +886,7 @@ module.exports = {
     if (rawMin !== '') {
       const minVal = parseInt(rawMin, 10);
       if (isNaN(minVal) || minVal < 0) {
-        return interaction.reply({ content: '❌ Min players must be a number (or 0 to clear).', flags: 64 });
+        return interaction.editReply({ content: '❌ Min players must be a number (or 0 to clear).' });
       }
       queueData.min = minVal === 0 ? null : minVal;
     }
@@ -889,16 +895,23 @@ module.exports = {
     if (rawMax !== '') {
       const maxVal = parseInt(rawMax, 10);
       if (isNaN(maxVal) || maxVal < 0) {
-        return interaction.reply({ content: '❌ Max players must be a number (or 0 to clear).', flags: 64 });
+        return interaction.editReply({ content: '❌ Max players must be a number (or 0 to clear).' });
       }
       queueData.max = maxVal === 0 ? null : maxVal;
     }
 
     if (queueData.min !== null && queueData.max !== null && queueData.min >= queueData.max) {
-      return interaction.reply({ content: '❌ Min players must be less than max players.', flags: 64 });
+      return interaction.editReply({ content: '❌ Min players must be less than max players.' });
     }
 
-    // Handle rename
+    // Reset ready-up state if a ready-up message was active
+    if (hadReadyMessage) {
+      queueData.readyPlayers      = [];
+      queueData.readyMessageId    = null;
+      queueData.sessionPromptSent = false;
+    }
+
+    // Handle rename + save
     if (newGame !== game) {
       storage.deleteQueue(game);
       storage.saveQueue(newGame, queueData);
@@ -906,8 +919,32 @@ module.exports = {
       storage.saveQueue(game, queueData);
     }
 
-    await interaction.reply({ content: `✅ Queue **${newGame}** updated!`, flags: 64 });
     await refreshEmbed(interaction, newGame, queueData);
+    storage.saveQueue(newGame, queueData);
+
+    // Handle ready-up message reset
+    if (hadReadyMessage && channelId) {
+      await deleteMessageById(interaction.client, channelId, oldReadyMessageId);
+
+      // Repost if the ready window is still active after edits
+      if (queueData.readyWindowEnd && queueData.readyWindowEnd > Math.floor(Date.now() / 1000)) {
+        try {
+          const ch       = await interaction.client.channels.fetch(channelId);
+          const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
+          const sentMsg  = await ch.send({
+            content:    `${pingList}\n🔄 **${newGame}** queue updated — please ready up again!`,
+            embeds:     [buildReadyStatusEmbed(newGame, queueData)],
+            components: [buildReadyUpRow(newGame)],
+          });
+          queueData.readyMessageId = sentMsg.id;
+          storage.saveQueue(newGame, queueData);
+        } catch (err) {
+          logger.error('Failed to repost ready-up after edit', { game: newGame, error: err.message });
+        }
+      }
+    }
+
+    interaction.deleteReply().catch(() => {});
     logger.info('Queue edited by host', { game, newGame, userId });
   },
 
@@ -1031,16 +1068,164 @@ module.exports = {
         new EmbedBuilder()
           .setColor('#888888')
           .setTitle(`⏹️ ${game} — Session Not Started`)
-          .setDescription('The host confirmed the session did not start — no Trinkets awarded.')
+          .setDescription('What would you like to do?')
+          .setTimestamp(),
+      ],
+      components: [buildSessionNoOptionsRow(game)],
+    });
+
+    logger.info('Session not started — options shown to host', { game, userId });
+  },
+
+  // ── Session No: Extend 30 minutes ───────────────────────────────
+  async handleSessionNoExtend(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
+    }
+
+    const now              = Math.floor(Date.now() / 1000);
+    const newTime          = now + 1800;
+    const oldReadyMessageId = queueData.readyMessageId;
+
+    queueData.scheduledTime     = newTime;
+    queueData.reminderSent      = false;
+    queueData.readyWindowEnd    = null;
+    queueData.readyPlayers      = [];
+    queueData.readyMessageId    = null;
+    queueData.sessionPromptSent = false;
+    storage.saveQueue(game, queueData);
+
+    await deleteMessageById(interaction.client, queueData.channelId, oldReadyMessageId);
+
+    await interaction.editReply({
+      content: null,
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#5865F2')
+          .setTitle(`⏰ ${game} — Extended 30 Minutes`)
+          .setDescription(`Session rescheduled to <t:${newTime}:F>. Ready-up check will begin 10 minutes before.`)
           .setTimestamp(),
       ],
       components: [],
     });
 
-    await markQueueEmbedClosed(interaction.client, game, queueData);
+    logger.info('Session extended by 30 minutes', { game, userId, newTime });
+  },
+
+  // ── Session No: Set New Time (opens modal) ───────────────────────
+  async handleSessionNoNewTime(interaction, game) {
+    const queueData = storage.getQueue(game);
+    queueData.sessionNoMessageId = interaction.message.id;
+    storage.saveQueue(game, queueData);
+
+    const modal = new ModalBuilder()
+      .setCustomId(`q:sno_modal:${game}`)
+      .setTitle(`Set New Time: ${game}`.slice(0, 45));
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('new_time')
+          .setLabel('New Start Time')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. 8:30pm, 9pm · Uses your registered timezone (/th-timezone)')
+          .setRequired(true),
+      ),
+    );
+
+    return interaction.showModal(modal);
+  },
+
+  // ── Session No: Set New Time modal submit ────────────────────────
+  async handleSessionNoNewTimeSubmit(interaction, game) {
+    await interaction.deferReply({ flags: 64 });
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.editReply({ content: '❌ Only the queue host can use this.' });
+    }
+
+    const rawTime = interaction.fields.getTextInputValue('new_time').trim();
+    const hostTZ  = storage.getUserTimezone(userId) ?? 'America/New_York';
+    const ts      = parseNaturalTimeInTZ(rawTime, hostTZ);
+
+    if (!ts) {
+      return interaction.editReply({
+        content: '❌ Could not parse the time. Try formats like `7pm`, `7:30pm`, or `19:30`.',
+      });
+    }
+    if (ts <= Math.floor(Date.now() / 1000)) {
+      return interaction.editReply({ content: '❌ The scheduled time must be in the future.' });
+    }
+
+    const oldReadyMessageId  = queueData.readyMessageId;
+    const sessionNoMessageId = queueData.sessionNoMessageId;
+    const channelId          = queueData.channelId;
+
+    queueData.scheduledTime      = ts;
+    queueData.reminderSent       = false;
+    queueData.readyWindowEnd     = null;
+    queueData.readyPlayers       = [];
+    queueData.readyMessageId     = null;
+    queueData.sessionNoMessageId = null;
+    queueData.sessionPromptSent  = false;
+    storage.saveQueue(game, queueData);
+
+    await deleteMessageById(interaction.client, channelId, oldReadyMessageId);
+
+    // Update the session-no options message to confirm the change
+    if (sessionNoMessageId && channelId) {
+      try {
+        const ch  = await interaction.client.channels.fetch(channelId);
+        const msg = await ch.messages.fetch(sessionNoMessageId);
+        await msg.edit({
+          content: null,
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#5865F2')
+              .setTitle(`🕐 ${game} — New Time Set`)
+              .setDescription(`Session rescheduled to <t:${ts}:F>. Ready-up check will begin 10 minutes before.`)
+              .setTimestamp(),
+          ],
+          components: [],
+        });
+      } catch { /* Message gone — fine */ }
+    }
+
+    interaction.deleteReply().catch(() => {});
+    logger.info('Session rescheduled to new time', { game, userId, ts });
+  },
+
+  // ── Session No: Close Queue ──────────────────────────────────────
+  async handleSessionNoClose(interaction, game) {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+    }
+
+    await interaction.update({
+      content: null,
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#888888')
+          .setTitle(`⏹️ ${game} — Queue Closed`)
+          .setDescription('Queue closed.')
+          .setTimestamp(),
+      ],
+      components: [],
+    });
+
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.messageId);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
-    logger.info('Queue closed: session denied by host', { game, userId });
+    logger.info('Queue closed by host (no session)', { game, userId });
   },
 
   // ── Session fill button ─────────────────────────────────────────
