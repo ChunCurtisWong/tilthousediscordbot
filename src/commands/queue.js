@@ -7,7 +7,7 @@ const {
 const logger  = require('../utils/logger');
 const storage = require('../utils/storage');
 const {
-  buildQueueEmbed, buildQueueComponents, buildReadyToggleRow, buildReadyUpRow,
+  buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
   buildReadyStatusEmbed, buildSessionPromptRow, buildSessionNoOptionsRow,
   buildSessionSummaryEmbed, buildSessionFillRow,
   buildClosedQueueEmbed, buildClosedQueueComponents,
@@ -997,79 +997,38 @@ module.exports = {
     logger.info('Queue edited by host', { game, newGame, userId });
   },
 
-  // ── Ready Up button (channel trigger — opens personal toggle ephemeral) ──
+  // ── Ready Up button — toggles ready state directly on the channel message ──
   async handleButtonReady(interaction, game) {
-    await interaction.deferReply({ flags: 64 });
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players?.length) {
-      return interaction.editReply({ content: '❌ This queue no longer exists.', components: [] });
+      return interaction.followUp({ content: '❌ This queue no longer exists.', flags: 64 });
     }
     if (!queueData.readyWindowEnd || queueData.sessionPromptSent) {
-      return interaction.editReply({ content: '❌ The ready-up window for this queue is not active.', components: [] });
+      return interaction.followUp({ content: '❌ The ready-up window for this queue is not active.', flags: 64 });
     }
-
-    const isInQueue = queueData.players.some(p => p.userId === userId);
-    if (!isInQueue) {
-      return interaction.editReply({ content: `❌ You are not in the **${game}** main queue.`, components: [] });
+    if (!queueData.players.some(p => p.userId === userId)) {
+      return interaction.followUp({ content: `❌ You are not in the **${game}** main queue.`, flags: 64 });
     }
 
     if (!queueData.readyPlayers) queueData.readyPlayers = [];
     if (!queueData.readyMessageId) {
       queueData.readyMessageId = interaction.message.id;
-      storage.saveQueue(game, queueData);
     }
 
-    const isReady = queueData.readyPlayers.includes(userId);
-    return interaction.editReply({
-      content: isReady
-        ? `✅ You are currently **ready** for **${game}**.`
-        : `⏳ You are currently **not ready** for **${game}**.`,
-      components: [buildReadyToggleRow(game, isReady)],
-    });
-  },
-
-  // ── Ready toggle button (personal ephemeral — toggles ready state) ──
-  async handleReadyToggle(interaction, game) {
-    await interaction.deferUpdate();
-    const queueData = storage.getQueue(game);
-    const userId    = interaction.user.id;
-
-    if (!queueData.readyWindowEnd || queueData.sessionPromptSent) {
-      return interaction.editReply({ content: '❌ The ready-up window has closed.', components: [] });
-    }
-
-    if (!queueData.players?.some(p => p.userId === userId)) {
-      return interaction.editReply({ content: `❌ You are not in the **${game}** main queue.`, components: [] });
-    }
-
-    if (!queueData.readyPlayers) queueData.readyPlayers = [];
     const wasReady = queueData.readyPlayers.includes(userId);
 
     if (wasReady) {
-      // Un-ready
       queueData.readyPlayers = queueData.readyPlayers.filter(id => id !== userId);
       storage.saveQueue(game, queueData);
-
-      if (queueData.readyMessageId && queueData.channelId) {
-        try {
-          const ch  = await interaction.client.channels.fetch(queueData.channelId);
-          const msg = await ch.messages.fetch(queueData.readyMessageId);
-          await msg.edit({
-            embeds:     [buildReadyStatusEmbed(game, queueData)],
-            components: [buildReadyUpRow(game)],
-          });
-        } catch { /* Main message gone — fine */ }
-      }
-
       await interaction.editReply({
-        content:    `⏳ You are currently **not ready** for **${game}**.`,
-        components: [buildReadyToggleRow(game, false)],
+        embeds:     [buildReadyStatusEmbed(game, queueData)],
+        components: [buildReadyUpRow(game)],
       });
       logger.info('Player un-readied', { userId, game });
     } else {
-      // Mark ready
       queueData.readyPlayers.push(userId);
       storage.saveQueue(game, queueData);
 
@@ -1077,16 +1036,10 @@ module.exports = {
       const readyCount   = queueData.readyPlayers.length;
       const allReady     = readyCount >= totalPlayers;
 
-      if (queueData.readyMessageId && queueData.channelId) {
-        try {
-          const ch  = await interaction.client.channels.fetch(queueData.channelId);
-          const msg = await ch.messages.fetch(queueData.readyMessageId);
-          await msg.edit({
-            embeds:     [buildReadyStatusEmbed(game, queueData)],
-            components: allReady ? [] : [buildReadyUpRow(game)],
-          });
-        } catch { /* Main message gone — fine */ }
-      }
+      await interaction.editReply({
+        embeds:     [buildReadyStatusEmbed(game, queueData)],
+        components: allReady ? [] : [buildReadyUpRow(game)],
+      });
 
       if (allReady) {
         const now = Math.floor(Date.now() / 1000);
@@ -1097,16 +1050,12 @@ module.exports = {
           await sendSessionPrompt(channel, game, queueData);
           logger.info('All players ready — session prompt sent immediately', { game, readyCount });
         } else {
-          logger.info('All players ready — waiting for scheduled time to prompt host', {
+          logger.info('All players ready — waiting for scheduled time', {
             game, readyCount, scheduledTime: queueData.scheduledTime,
           });
         }
       }
 
-      await interaction.editReply({
-        content:    `✅ You are currently **ready** for **${game}**.`,
-        components: queueData.sessionPromptSent ? [] : [buildReadyToggleRow(game, true)],
-      });
       logger.info('Player readied', { userId, game });
     }
   },
