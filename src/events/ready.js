@@ -1,5 +1,5 @@
 const logger = require('../utils/logger');
-const { startYouTubePoller }  = require('../utils/youtube');
+// const { startYouTubePoller }  = require('../utils/youtube'); // disabled
 const { startReminderChecker } = require('../utils/reminders');
 const { startTrinketBackups }  = require('../utils/trinkets');
 const { runStartupCheck }      = require('../utils/startupCheck');
@@ -17,7 +17,7 @@ module.exports = {
       status: 'online',
     });
 
-    startYouTubePoller(client);
+    // startYouTubePoller(client); // disabled — re-enable when needed
     startReminderChecker(client);
     startTrinketBackups();
     runStartupCheck();

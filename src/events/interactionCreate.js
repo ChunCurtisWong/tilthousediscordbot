@@ -68,7 +68,11 @@ module.exports = {
         // Queue buttons
         if (customId.startsWith('q:')) {
           const queueCmd = interaction.client.commands.get('th-queue');
-          if (customId.startsWith('q:join:')) {
+          if (customId.startsWith('q:join_fill:')) {
+            const game = customId.slice('q:join_fill:'.length);
+            logger.info('Button: queue join fill', { game, userId: interaction.user.id });
+            await queueCmd.handleButtonJoinFill(interaction, game);
+          } else if (customId.startsWith('q:join:')) {
             const game = customId.slice('q:join:'.length);
             logger.info('Button: queue join', { game, userId: interaction.user.id });
             await queueCmd.handleButtonJoin(interaction, game);
@@ -76,6 +80,22 @@ module.exports = {
             const game = customId.slice('q:leave:'.length);
             logger.info('Button: queue leave', { game, userId: interaction.user.id });
             await queueCmd.handleButtonLeave(interaction, game);
+          } else if (customId.startsWith('q:edit:')) {
+            const game = customId.slice('q:edit:'.length);
+            logger.info('Button: queue edit', { game, userId: interaction.user.id });
+            await queueCmd.handleButtonEdit(interaction, game);
+          } else if (customId.startsWith('q:ready:')) {
+            const game = customId.slice('q:ready:'.length);
+            logger.info('Button: queue ready', { game, userId: interaction.user.id });
+            await queueCmd.handleButtonReady(interaction, game);
+          } else if (customId.startsWith('q:session_yes:')) {
+            const game = customId.slice('q:session_yes:'.length);
+            logger.info('Button: session yes', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionYes(interaction, game);
+          } else if (customId.startsWith('q:session_no:')) {
+            const game = customId.slice('q:session_no:'.length);
+            logger.info('Button: session no', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionNo(interaction, game);
           } else if (customId.startsWith('q:clear_all:')) {
             logger.info('Button: queue clear-all confirm', { customId, userId: interaction.user.id });
             await queueCmd.handleClearAllButton(interaction);
@@ -210,6 +230,10 @@ module.exports = {
         } else if (customId === 't:custom_modal') {
           logger.info('Modal: teams custom', { userId: interaction.user.id });
           await interaction.client.commands.get('th-teams').handleCustomModal(interaction);
+        } else if (customId.startsWith('q:edit_modal:')) {
+          const game = customId.slice('q:edit_modal:'.length);
+          logger.info('Modal: queue edit', { game, userId: interaction.user.id });
+          await interaction.client.commands.get('th-queue').handleEditModalSubmit(interaction, game);
         }
       } catch (err) {
         await safeError(interaction, err, 'Modal interaction error');
