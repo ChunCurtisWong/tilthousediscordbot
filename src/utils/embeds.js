@@ -92,8 +92,7 @@ function buildQueueEmbed(game, queueData) {
 }
 
 /**
- * Returns an ActionRow with Join Queue / Leave Queue buttons for a game.
- * Custom IDs use the format "q:join:<game>" and "q:leave:<game>".
+ * Returns an ActionRow with Join Queue, Join as Fill, Leave Queue, and Edit Queue buttons.
  */
 function buildQueueComponents(game) {
   return new ActionRowBuilder().addComponents(
@@ -103,8 +102,49 @@ function buildQueueComponents(game) {
       .setEmoji('✅')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
+      .setCustomId(`q:join_fill:${game}`)
+      .setLabel('Join as Fill')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
       .setCustomId(`q:leave:${game}`)
       .setLabel('Leave Queue')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`q:edit:${game}`)
+      .setLabel('Edit Queue')
+      .setEmoji('✏️')
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+/**
+ * Returns an ActionRow with a single "Ready Up!" button for timed queues.
+ */
+function buildReadyUpRow(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:ready:${game}`)
+      .setLabel('Ready Up!')
+      .setEmoji('✋')
+      .setStyle(ButtonStyle.Success),
+  );
+}
+
+/**
+ * Returns an ActionRow with Yes / No buttons for the host session prompt.
+ */
+function buildSessionPromptRow(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:session_yes:${game}`)
+      .setLabel('Yes')
+      .setEmoji('✅')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`q:session_no:${game}`)
+      .setLabel('No')
       .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
   );
@@ -134,4 +174,11 @@ function buildClosedQueueComponents() {
   );
 }
 
-module.exports = { buildQueueEmbed, buildQueueComponents, buildClosedQueueEmbed, buildClosedQueueComponents };
+module.exports = {
+  buildQueueEmbed,
+  buildQueueComponents,
+  buildReadyUpRow,
+  buildSessionPromptRow,
+  buildClosedQueueEmbed,
+  buildClosedQueueComponents,
+};

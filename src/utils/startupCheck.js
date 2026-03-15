@@ -39,19 +39,10 @@ function runStartupCheck() {
     warnings++;
   }
 
-  // YouTube environment variables
-  if (!process.env.YOUTUBE_API_KEY) {
-    logger.warn('Startup check: YOUTUBE_API_KEY is not set — YouTube notifier will be disabled');
-    warnings++;
-  }
-  if (!process.env.YOUTUBE_CHANNEL_ID) {
-    logger.warn('Startup check: YOUTUBE_CHANNEL_ID is not set — YouTube notifier will be disabled');
-    warnings++;
-  }
-  if (!process.env.YOUTUBE_DISCORD_CHANNEL_ID) {
-    logger.warn('Startup check: YOUTUBE_DISCORD_CHANNEL_ID is not set — YouTube notifier will be disabled');
-    warnings++;
-  }
+  // YouTube environment variable checks disabled — YouTube notifier is currently disabled
+  // if (!process.env.YOUTUBE_API_KEY) { ... }
+  // if (!process.env.YOUTUBE_CHANNEL_ID) { ... }
+  // if (!process.env.YOUTUBE_DISCORD_CHANNEL_ID) { ... }
 
   if (warnings === 0) {
     logger.info('Startup checks passed — all systems nominal');

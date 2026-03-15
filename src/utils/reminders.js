@@ -2,19 +2,19 @@ const { EmbedBuilder } = require('discord.js');
 const logger  = require('./logger');
 const storage = require('./storage');
 const { payoutQueue } = require('./trinkets');
-const { buildClosedQueueEmbed, buildClosedQueueComponents } = require('./embeds');
-
-// Case A: timed queues close 30 minutes after scheduled start
-const QUEUE_CLOSE_OFFSET = 1800; // seconds
-
-// Fallback inactivity timeout for no-time queues (3 hours)
-const INACTIVITY_TIMEOUT = 10_800; // seconds
+const {
+  buildClosedQueueEmbed, buildClosedQueueComponents,
+  buildReadyUpRow, buildSessionPromptRow,
+} = require('./embeds');
 
 // Case B / C: 30-minute window after threshold/fulfilled before close
 const WINDOW_DURATION = 1800; // seconds
 
 // Case C: host prompt auto-expires after 5 minutes → Extend applied
 const HOST_PROMPT_EXPIRY = 300; // seconds
+
+// Fallback inactivity timeout for no-time queues (3 hours)
+const INACTIVITY_TIMEOUT = 10_800; // seconds
 
 // ─── Mark the original queue embed as closed ──────────────────────────────────
 
@@ -88,6 +88,40 @@ async function sendCloseNotification(client, channelId, game, payoutResult) {
       ],
     }).catch(err => logger.error('sendCloseNotification: failed to send payout embed', { game, error: err.message }));
   }
+}
+
+// ─── Session prompt ────────────────────────────────────────────────────────────
+
+async function sendSessionPrompt(channel, game, queueData) {
+  const host = queueData.players?.[0];
+  if (!host) return;
+
+  const totalPlayers = queueData.players.length;
+  const readyCount   = (queueData.readyPlayers ?? []).length;
+
+  let description;
+  if (readyCount >= totalPlayers) {
+    description =
+      `All **${totalPlayers}** player${totalPlayers !== 1 ? 's' : ''} have readied up!\n\n` +
+      `Has the gaming session started? Click **Yes** to pay out Trinkets or **No** to close without payout.`;
+  } else {
+    description =
+      `Ready-up window closed — **${readyCount}/${totalPlayers}** players were ready. ` +
+      `Non-ready players have been moved to fill.\n\n` +
+      `Has the gaming session started? Click **Yes** to pay out Trinkets or **No** to close without payout.`;
+  }
+
+  await channel.send({
+    content: `<@${host.userId}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle(`🎮 ${game} — Has the session started?`)
+        .setDescription(description)
+        .setTimestamp(),
+    ],
+    components: [buildSessionPromptRow(game)],
+  });
 }
 
 // ─── Close a queue with optional payout ──────────────────────────────────────
@@ -169,12 +203,13 @@ async function runQueueCheck(client, isStartup = false) {
 
     // ── CASE A: Scheduled time set ───────────────────────────────────
     if (scheduledTime) {
-      const closeTime = scheduledTime + QUEUE_CLOSE_OFFSET;
       const timeUntil = scheduledTime - now;
 
-      // 10-minute reminder (skip on startup)
+      // ── 10-minute reminder — opens the ready-up window ───────────
       if (!isStartup && !queueData.reminderSent && timeUntil <= 600 && timeUntil > 0) {
-        queueData.reminderSent = true;
+        queueData.reminderSent   = true;
+        queueData.readyWindowEnd = scheduledTime + 600; // window closes 10 min after start
+        queueData.readyPlayers   = [];
         storage.saveQueue(game, queueData);
 
         if (channelId) {
@@ -183,37 +218,100 @@ async function runQueueCheck(client, isStartup = false) {
             const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
             const minLeft  = Math.ceil(timeUntil / 60);
             await ch.send({
-              content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`,
+              content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
               embeds: [
                 new EmbedBuilder()
                   .setColor('#FFD700')
-                  .setTitle(`⏰ Reminder: ${game} starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
+                  .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
                   .setDescription(
                     `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
-                    `The queue stays open for **30 minutes** after start time.`
+                    `Click **Ready Up!** to confirm you'll be there.\n` +
+                    `Ready-up window closes <t:${scheduledTime + 600}:R>.`
                   )
                   .setTimestamp(),
               ],
+              components: [buildReadyUpRow(game)],
             });
-            logger.info('Reminder sent', { game, scheduledTime });
+            logger.info('Reminder sent with ready-up button', { game, scheduledTime });
           } catch (err) {
             logger.error('Failed to send reminder', { game, error: err.message });
           }
         }
       }
 
-      // Close 30 minutes after scheduled start
-      if (!queueData.payoutSent && closeTime <= now) {
-        queueData.payoutSent = true;
+      // If scheduled time passed without a reminder (e.g. bot was offline), initialise window
+      if (!queueData.readyWindowEnd && timeUntil <= 0) {
+        queueData.reminderSent   = true;
+        queueData.readyWindowEnd = scheduledTime + 600;
+        queueData.readyPlayers   = queueData.readyPlayers ?? [];
         storage.saveQueue(game, queueData);
-        await closeQueue(client, game, queueData, {
-          withPayout: !isStartup,
-          reason: isStartup ? 'offline' : 'default',
-        });
       }
 
-      // Remove from storage 1 hour after close
-      if (closeTime < now - 3600) storage.deleteQueue(game);
+      // ── Ready-up window expiry ────────────────────────────────────
+      const readyWindowEnd = queueData.readyWindowEnd;
+      if (
+        !isStartup &&
+        readyWindowEnd &&
+        readyWindowEnd <= now &&
+        !queueData.sessionPromptSent
+      ) {
+        queueData.sessionPromptSent = true;
+
+        const readySet         = new Set(queueData.readyPlayers ?? []);
+        const notReady         = (queueData.players ?? []).filter(p => !readySet.has(p.userId));
+        queueData.players      = (queueData.players ?? []).filter(p => readySet.has(p.userId));
+
+        // Move non-ready players to the end of the fill list
+        const originalFillCount = (queueData.fill ?? []).length;
+        queueData.fill          = (queueData.fill ?? []).concat(notReady);
+
+        // Promote original fill players (not the just-demoted ones) to fill vacated spots
+        const promoteCount = Math.min(notReady.length, originalFillCount);
+        const promoted     = queueData.fill.splice(0, promoteCount);
+        queueData.players.push(...promoted);
+
+        storage.saveQueue(game, queueData);
+
+        if (channelId) {
+          try {
+            const ch = await client.channels.fetch(channelId);
+
+            // Notify promoted fill players
+            for (const p of promoted) {
+              await ch.send({
+                content: `<@${p.userId}> You've been promoted from the fill list to the **${game}** main queue! 🎮`,
+              });
+            }
+
+            await sendSessionPrompt(ch, game, queueData);
+            logger.info('Ready window expired — session prompt sent', {
+              game,
+              notReady:  notReady.length,
+              promoted:  promoted.length,
+              remaining: queueData.players.length,
+            });
+          } catch (err) {
+            logger.error('Failed to process ready window expiry', { game, error: err.message });
+          }
+        }
+      }
+
+      // ── Fallback: auto-close 2 hours after scheduled time if host never responded ──
+      if (
+        !isStartup &&
+        queueData.sessionPromptSent &&
+        scheduledTime + 7200 <= now &&
+        !queueData.payoutSent
+      ) {
+        queueData.payoutSent = true;
+        storage.saveQueue(game, queueData);
+        logger.info('Queue auto-closed after session prompt timeout', { game });
+        await markQueueEmbedClosed(client, game, queueData);
+        storage.deleteQueue(game);
+      }
+
+      // ── Cleanup: remove record 3 hours after scheduled time ──────
+      if (scheduledTime + 10800 < now) storage.deleteQueue(game);
       continue;
     }
 
@@ -287,4 +385,9 @@ function startReminderChecker(client) {
   setInterval(() => runQueueCheck(client), 60_000);
 }
 
-module.exports = { startReminderChecker, sendCloseNotification, markQueueEmbedClosed };
+module.exports = {
+  startReminderChecker,
+  sendCloseNotification,
+  markQueueEmbedClosed,
+  sendSessionPrompt,
+};

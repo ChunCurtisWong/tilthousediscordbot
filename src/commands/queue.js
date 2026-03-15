@@ -1,9 +1,19 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = require('discord.js');
-const logger = require('../utils/logger');
+const {
+  SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
+  ModalBuilder, TextInputBuilder, TextInputStyle,
+} = require('discord.js');
+const logger  = require('../utils/logger');
 const storage = require('../utils/storage');
-const { buildQueueEmbed, buildQueueComponents, buildClosedQueueEmbed, buildClosedQueueComponents } = require('../utils/embeds');
-const { payoutQueue } = require('../utils/trinkets');
-const { sendCloseNotification, markQueueEmbedClosed } = require('../utils/reminders');
+const {
+  buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
+  buildClosedQueueEmbed, buildClosedQueueComponents,
+} = require('../utils/embeds');
+const { payoutQueue }  = require('../utils/trinkets');
+const {
+  sendCloseNotification, markQueueEmbedClosed, sendSessionPrompt,
+} = require('../utils/reminders');
 
 // Host prompt re-send cooldown: 10 minutes
 const HOST_PROMPT_COOLDOWN = 10 * 60 * 1000; // ms
@@ -305,9 +315,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
   if (scheduledTime) {
-    // Case A: notify on thresholds but NEVER close early
+    // Case A: notify on thresholds — Trinket payout controlled by host, not a timer
     if (max !== null && count >= max) {
-      const closeTs = scheduledTime + 1800;
       await channel.send({
         content: `${pingList}\n🔒 The **${game}** queue is full!`,
         embeds: [
@@ -316,7 +325,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
             .setTitle(`🔒 ${game} — Queue Full!`)
             .setDescription(
               `The queue is full with **${count}/${max}** players.\n` +
-              `Queue closes <t:${closeTs}:R> (30 min after start time).\n\n` +
+              `A ready-up check will begin 10 minutes before the session starts!\n\n` +
               `**Players:**\n${bulletList(queueData.players)}`
             )
             .setTimestamp(),
@@ -381,9 +390,20 @@ async function processLeave(interaction, game, userId) {
       logger.info('Fill player promoted to main queue', { promotedUserId: promoted.userId, game });
       storage.saveQueue(game, queueData);
       await refreshEmbed(interaction, game, queueData);
-      await channel.send({
-        content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
-      });
+
+      // If we're inside the ready-up window, the promoted player needs to ready up too
+      if (queueData.readyWindowEnd && !queueData.sessionPromptSent) {
+        await channel.send({
+          content:
+            `<@${promoted.userId}> You've been promoted to the **${game}** main queue! 🎮\n` +
+            `Please ready up before the window closes <t:${queueData.readyWindowEnd}:R>!`,
+          components: [buildReadyUpRow(game)],
+        });
+      } else {
+        await channel.send({
+          content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
+        });
+      }
     } else {
       storage.saveQueue(game, queueData);
       await refreshEmbed(interaction, game, queueData);
@@ -569,7 +589,7 @@ module.exports = {
 
       const options = clearable.slice(0, 25).map(([name, q]) => {
         const count = q.players?.length ?? 0;
-        const fill  = q.fill?.length ?? 0;
+        const fill = q.fill?.length ?? 0;
         let desc = `${count} player${count !== 1 ? 's' : ''}`;
         if (fill > 0) desc += `, ${fill} on fill`;
         if (q.scheduledTime) {
@@ -678,6 +698,247 @@ module.exports = {
   async handleButtonLeave(interaction, game) {
     await interaction.deferUpdate();
     return processLeave(interaction, game, interaction.user.id);
+  },
+
+  // ── Join as Fill button ─────────────────────────────────────────
+  async handleButtonJoinFill(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
+
+    if (!queueData.fill) queueData.fill = [];
+
+    if (queueData.players.find(p => p.userId === userId)) {
+      return interaction.followUp({ content: `❌ You are already in the **${game}** main queue.`, flags: 64 });
+    }
+    if (queueData.fill.find(p => p.userId === userId)) {
+      return interaction.followUp({ content: `❌ You are already on the **${game}** fill list.`, flags: 64 });
+    }
+
+    queueData.fill.push({ userId, username, joinedAt: Date.now() });
+    storage.saveQueue(game, queueData);
+    await refreshEmbed(interaction, game, queueData);
+    storage.saveQueue(game, queueData);
+
+    const pos = queueData.fill.length;
+    logger.info('Player joined fill list directly', { userId, game, fillPosition: pos });
+    return interaction.followUp({
+      content:
+        `✅ You've been added to the **${game}** fill list at position **#${pos}**.\n` +
+        `You'll be promoted automatically if a spot opens up!`,
+      flags: 64,
+    });
+  },
+
+  // ── Edit Queue button (host only) ───────────────────────────────
+  async handleButtonEdit(interaction, game) {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.reply({ content: '❌ Only the queue host can edit the queue.', flags: 64 });
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`q:edit_modal:${game}`)
+      .setTitle(`Edit: ${game}`.slice(0, 45));
+
+    const gameInput = new TextInputBuilder()
+      .setCustomId('game_name')
+      .setLabel('Game Name')
+      .setStyle(TextInputStyle.Short)
+      .setValue(game)
+      .setMaxLength(100)
+      .setRequired(true);
+
+    const timeInput = new TextInputBuilder()
+      .setCustomId('scheduled_time')
+      .setLabel('Set Time (blank=keep, "clear" to remove)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
+    if (queueData.scheduledTime) timeInput.setValue(String(queueData.scheduledTime));
+
+    const minInput = new TextInputBuilder()
+      .setCustomId('min_players')
+      .setLabel('Min Players (blank=keep, 0 to clear)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
+    if (queueData.min !== null) minInput.setValue(String(queueData.min));
+
+    const maxInput = new TextInputBuilder()
+      .setCustomId('max_players')
+      .setLabel('Max Players (blank=keep, 0 to clear)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
+    if (queueData.max !== null) maxInput.setValue(String(queueData.max));
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(gameInput),
+      new ActionRowBuilder().addComponents(timeInput),
+      new ActionRowBuilder().addComponents(minInput),
+      new ActionRowBuilder().addComponents(maxInput),
+    );
+
+    return interaction.showModal(modal);
+  },
+
+  // ── Edit Queue modal submit ─────────────────────────────────────
+  async handleEditModalSubmit(interaction, game) {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.reply({ content: '❌ Only the queue host can edit the queue.', flags: 64 });
+    }
+
+    const newGame  = interaction.fields.getTextInputValue('game_name').trim() || game;
+    const rawTime  = interaction.fields.getTextInputValue('scheduled_time').trim();
+    const rawMin   = interaction.fields.getTextInputValue('min_players').trim();
+    const rawMax   = interaction.fields.getTextInputValue('max_players').trim();
+
+    // Apply scheduled time
+    if (rawTime !== '' && rawTime !== String(queueData.scheduledTime ?? '')) {
+      if (rawTime.toLowerCase() === 'clear') {
+        queueData.scheduledTime = null;
+        queueData.reminderSent  = false;
+        queueData.readyWindowEnd = null;
+        queueData.readyPlayers   = [];
+        queueData.sessionPromptSent = false;
+      } else {
+        const ts = parseTime(rawTime);
+        if (!ts) {
+          return interaction.reply({
+            content: '❌ Could not parse the time. Use formats like `7pm`, `19:00`, or a Unix timestamp.',
+            flags: 64,
+          });
+        }
+        queueData.scheduledTime  = ts;
+        queueData.reminderSent   = false; // allow new reminder with new time
+        queueData.readyWindowEnd = null;
+        queueData.readyPlayers   = [];
+        queueData.sessionPromptSent = false;
+      }
+    }
+
+    // Apply min players
+    if (rawMin !== '') {
+      const minVal = parseInt(rawMin, 10);
+      if (isNaN(minVal) || minVal < 0) {
+        return interaction.reply({ content: '❌ Min players must be a number (or 0 to clear).', flags: 64 });
+      }
+      queueData.min = minVal === 0 ? null : minVal;
+    }
+
+    // Apply max players
+    if (rawMax !== '') {
+      const maxVal = parseInt(rawMax, 10);
+      if (isNaN(maxVal) || maxVal < 0) {
+        return interaction.reply({ content: '❌ Max players must be a number (or 0 to clear).', flags: 64 });
+      }
+      queueData.max = maxVal === 0 ? null : maxVal;
+    }
+
+    if (queueData.min !== null && queueData.max !== null && queueData.min >= queueData.max) {
+      return interaction.reply({ content: '❌ Min players must be less than max players.', flags: 64 });
+    }
+
+    // Handle rename
+    if (newGame !== game) {
+      storage.deleteQueue(game);
+      storage.saveQueue(newGame, queueData);
+    } else {
+      storage.saveQueue(game, queueData);
+    }
+
+    await interaction.reply({ content: `✅ Queue **${newGame}** updated!`, flags: 64 });
+    await refreshEmbed(interaction, newGame, queueData);
+    logger.info('Queue edited by host', { game, newGame, userId });
+  },
+
+  // ── Ready Up button ─────────────────────────────────────────────
+  async handleButtonReady(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length) {
+      return interaction.followUp({ content: '❌ This queue no longer exists.', flags: 64 });
+    }
+    if (!queueData.readyWindowEnd || queueData.sessionPromptSent) {
+      return interaction.followUp({ content: '❌ The ready-up window for this queue is not active.', flags: 64 });
+    }
+
+    const isInQueue = queueData.players.some(p => p.userId === userId);
+    if (!isInQueue) {
+      return interaction.followUp({ content: `❌ You are not in the **${game}** main queue.`, flags: 64 });
+    }
+
+    if (!queueData.readyPlayers) queueData.readyPlayers = [];
+    if (queueData.readyPlayers.includes(userId)) {
+      return interaction.followUp({ content: `✅ You have already readied up for **${game}**!`, flags: 64 });
+    }
+
+    queueData.readyPlayers.push(userId);
+    storage.saveQueue(game, queueData);
+
+    const totalPlayers = queueData.players.length;
+    const readyCount   = queueData.readyPlayers.length;
+
+    await interaction.followUp({
+      content: `✅ You're ready for **${game}**! (${readyCount}/${totalPlayers} ready)`,
+      flags: 64,
+    });
+
+    // If all players are ready, send host session prompt immediately
+    if (readyCount >= totalPlayers) {
+      queueData.sessionPromptSent = true;
+      storage.saveQueue(game, queueData);
+
+      const channel = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+      await sendSessionPrompt(channel, game, queueData);
+      logger.info('All players ready, session prompt sent', { game, readyCount });
+    }
+  },
+
+  // ── Session prompt: Yes ─────────────────────────────────────────
+  async handleSessionYes(interaction, game) {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+    }
+
+    await interaction.update({
+      content: `✅ **${game}** session confirmed — paying out Trinkets!`,
+      components: [],
+    });
+
+    const payoutResult = await payoutQueue(queueData);
+    await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult);
+    await markQueueEmbedClosed(interaction.client, game, queueData);
+    storage.deleteQueue(game);
+    logger.info('Queue closed: session confirmed by host', { game, userId });
+  },
+
+  // ── Session prompt: No ──────────────────────────────────────────
+  async handleSessionNo(interaction, game) {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+    }
+
+    await interaction.update({
+      content: `❌ **${game}** session was not confirmed — no Trinkets paid out.`,
+      components: [],
+    });
+
+    await markQueueEmbedClosed(interaction.client, game, queueData);
+    storage.deleteQueue(game);
+    logger.info('Queue closed: session denied by host', { game, userId });
   },
 
   // ── Host prompt: Fulfilled ──────────────────────────────────────
