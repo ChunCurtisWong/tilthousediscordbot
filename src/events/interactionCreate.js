@@ -84,6 +84,10 @@ module.exports = {
             const game = customId.slice('q:edit:'.length);
             logger.info('Button: queue edit', { game, userId: interaction.user.id });
             await queueCmd.handleButtonEdit(interaction, game);
+          } else if (customId.startsWith('q:ready_toggle:')) {
+            const game = customId.slice('q:ready_toggle:'.length);
+            logger.info('Button: queue ready toggle', { game, userId: interaction.user.id });
+            await queueCmd.handleReadyToggle(interaction, game);
           } else if (customId.startsWith('q:ready:')) {
             const game = customId.slice('q:ready:'.length);
             logger.info('Button: queue ready', { game, userId: interaction.user.id });
