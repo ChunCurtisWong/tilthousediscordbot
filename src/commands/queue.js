@@ -114,6 +114,61 @@ function buildHostPromptRow(game) {
 
 // ─── Time parsing ─────────────────────────────────────────────────────────────
 
+/**
+ * Parses a natural time string (e.g. "7pm", "7:30 PM", "19:30") interpreted in
+ * the given IANA timezone. Returns a UTC Unix timestamp (seconds), or null on failure.
+ * Pure digit strings are treated as Unix timestamps and returned as-is.
+ */
+function parseNaturalTimeInTZ(timeStr, tz) {
+  const trimmed = timeStr.trim();
+
+  // Pass-through for raw Unix timestamps
+  if (/^\d{9,12}$/.test(trimmed)) return parseInt(trimmed, 10);
+
+  // Parse H[:MM][am/pm]
+  const match = trimmed.replace(/\s+/g, '').match(/^(\d{1,2})(?::(\d{2}))?(am|pm)?$/i);
+  if (!match) return null;
+
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2] || '0', 10);
+  const mer = (match[3] || '').toLowerCase();
+
+  if (mer === 'pm' && h !== 12) h += 12;
+  if (mer === 'am' && h === 12) h = 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+
+  // Get today's date components in the target timezone
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric',
+  }).formatToParts(now);
+  const yr = parseInt(parts.find(p => p.type === 'year').value);
+  const mo = parseInt(parts.find(p => p.type === 'month').value);
+  const dy = parseInt(parts.find(p => p.type === 'day').value);
+
+  // Rough UTC candidate: treat the desired h:m as UTC, then adjust by timezone offset
+  const rough = Date.UTC(yr, mo - 1, dy, h, m, 0);
+  const dispParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(rough));
+  const dh = parseInt(dispParts.find(p => p.type === 'hour').value) % 24;
+  const dm = parseInt(dispParts.find(p => p.type === 'minute').value);
+
+  let tsMs = rough - ((dh * 60 + dm) - (h * 60 + m)) * 60 * 1000;
+
+  // Advance to next occurrence if in the past
+  if (tsMs <= now.getTime()) tsMs += 24 * 60 * 60 * 1000;
+
+  return Math.floor(tsMs / 1000);
+}
+
+/** Formats a Unix timestamp as a human-readable time in the given timezone, e.g. "7:30 PM". */
+function formatTimeInTZ(unixSec, tz) {
+  return new Date(unixSec * 1000).toLocaleString('en-US', {
+    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+
 function parseTime(timeStr) {
   const trimmed = timeStr.trim();
   if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
@@ -749,12 +804,14 @@ module.exports = {
       .setMaxLength(100)
       .setRequired(true);
 
+    const hostTZ = storage.getUserTimezone(userId) ?? 'America/New_York';
     const timeInput = new TextInputBuilder()
       .setCustomId('scheduled_time')
       .setLabel('Set Time (blank=keep, "clear" to remove)')
       .setStyle(TextInputStyle.Short)
+      .setPlaceholder('e.g. 7pm, 9:30pm · Uses your registered timezone (/th-timezone)')
       .setRequired(false);
-    if (queueData.scheduledTime) timeInput.setValue(String(queueData.scheduledTime));
+    if (queueData.scheduledTime) timeInput.setValue(formatTimeInTZ(queueData.scheduledTime, hostTZ));
 
     const minInput = new TextInputBuilder()
       .setCustomId('min_players')
@@ -795,25 +852,26 @@ module.exports = {
     const rawMax   = interaction.fields.getTextInputValue('max_players').trim();
 
     // Apply scheduled time
-    if (rawTime !== '' && rawTime !== String(queueData.scheduledTime ?? '')) {
+    if (rawTime !== '') {
       if (rawTime.toLowerCase() === 'clear') {
-        queueData.scheduledTime = null;
-        queueData.reminderSent  = false;
-        queueData.readyWindowEnd = null;
-        queueData.readyPlayers   = [];
+        queueData.scheduledTime     = null;
+        queueData.reminderSent      = false;
+        queueData.readyWindowEnd    = null;
+        queueData.readyPlayers      = [];
         queueData.sessionPromptSent = false;
       } else {
-        const ts = parseTime(rawTime);
+        const hostTZ = storage.getUserTimezone(userId) ?? 'America/New_York';
+        const ts = parseNaturalTimeInTZ(rawTime, hostTZ);
         if (!ts) {
           return interaction.reply({
-            content: '❌ Could not parse the time. Use formats like `7pm`, `19:00`, or a Unix timestamp.',
+            content: '❌ Could not parse the time. Try formats like `7pm`, `7:30pm`, or `19:30`.',
             flags: 64,
           });
         }
-        queueData.scheduledTime  = ts;
-        queueData.reminderSent   = false; // allow new reminder with new time
-        queueData.readyWindowEnd = null;
-        queueData.readyPlayers   = [];
+        queueData.scheduledTime     = ts;
+        queueData.reminderSent      = false;
+        queueData.readyWindowEnd    = null;
+        queueData.readyPlayers      = [];
         queueData.sessionPromptSent = false;
       }
     }
@@ -888,11 +946,6 @@ module.exports = {
     await interaction.editReply({
       embeds: [buildReadyStatusEmbed(game, queueData)],
       components: allReady ? [] : [buildReadyUpRow(game)],
-    });
-
-    await interaction.followUp({
-      content: `✅ You're ready for **${game}**! (${readyCount}/${totalPlayers} ready)`,
-      flags: 64,
     });
 
     // All ready — send host prompt now if scheduled time has passed; otherwise let poller handle it
