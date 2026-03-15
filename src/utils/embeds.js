@@ -120,20 +120,6 @@ function buildQueueComponents(game) {
 }
 
 /**
- * Returns an ActionRow with a single personal toggle button for the ready-up ephemeral.
- * Label and style reflect the player's current ready state.
- */
-function buildReadyToggleRow(game, isReady) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`q:ready_toggle:${game}`)
-      .setLabel(isReady ? 'Un-Ready' : 'Ready Up')
-      .setEmoji(isReady ? '❌' : '✋')
-      .setStyle(isReady ? ButtonStyle.Danger : ButtonStyle.Success),
-  );
-}
-
-/**
  * Returns an ActionRow with a single "Ready Up!" button for timed queues.
  */
 function buildReadyUpRow(game) {
@@ -287,7 +273,6 @@ function buildClosedQueueComponents() {
 module.exports = {
   buildQueueEmbed,
   buildQueueComponents,
-  buildReadyToggleRow,
   buildReadyUpRow,
   buildReadyStatusEmbed,
   buildSessionPromptRow,
