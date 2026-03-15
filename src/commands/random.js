@@ -70,14 +70,16 @@ module.exports = {
     await refreshPublicEmbed(interaction.client, listData);
 
     logger.info('Random pick removed from list', { userId: removed.userId });
-    return interaction.editReply({
+    await interaction.editReply({
       content: `✅ Removed <@${removed.userId}> from the list.`,
       components: [],
     });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 
   // ── Button: Keep the picked player ───────────────────────────────────────
   async handleKeep(interaction) {
-    return interaction.update({ content: '✅ Player kept in the list.', components: [] });
+    await interaction.update({ content: '✅ Player kept in the list.', components: [] });
+    setTimeout(() => interaction.message.delete().catch(() => {}), 15_000);
   },
 };

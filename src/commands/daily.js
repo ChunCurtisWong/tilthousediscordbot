@@ -21,7 +21,9 @@ module.exports = {
           `You already claimed your daily reward.\n` +
           `Come back <t:${resetTs}:R> (resets at **7pm ET** daily).`
         );
-      return interaction.reply({ embeds: [embed], flags: 64 });
+      await interaction.reply({ embeds: [embed], flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     logger.info('Daily claimed', { userId, username, streak: result.newStreak, reward: result.reward });

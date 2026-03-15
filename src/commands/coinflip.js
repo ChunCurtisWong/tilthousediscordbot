@@ -101,10 +101,11 @@ module.exports = {
 
     await interaction.reply({ embeds: [resultEmbed] });
 
-    // Ephemeral balance reveal — only visible to the player
-    await interaction.followUp({
+    // Ephemeral balance reveal — only visible to the player (auto-deletes after 15s)
+    const balMsg = await interaction.followUp({
       content: `Your new balance: **${newBalance} 🪙**`,
       flags: 64,
     });
+    setTimeout(() => balMsg.delete().catch(() => {}), 15_000);
   },
 };
