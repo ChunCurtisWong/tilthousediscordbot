@@ -151,6 +151,79 @@ function buildSessionPromptRow(game) {
 }
 
 /**
+ * Builds a live ready-up status embed showing per-player ready state.
+ */
+function buildReadyStatusEmbed(game, queueData) {
+  const players = queueData.players ?? [];
+  const readySet = new Set(queueData.readyPlayers ?? []);
+  const readyCount = readySet.size;
+  const totalPlayers = players.length;
+
+  const lines = players.map(p =>
+    readySet.has(p.userId) ? `✅ <@${p.userId}>` : `⏳ <@${p.userId}>`
+  );
+
+  const allReady = readyCount >= totalPlayers && totalPlayers > 0;
+
+  return new EmbedBuilder()
+    .setColor(allReady ? '#00FF7F' : '#FFD700')
+    .setTitle(`✋ ${game} — Ready Up!`)
+    .setDescription(
+      `Session starts <t:${queueData.scheduledTime}:R>.\n\n` +
+      `**${readyCount}/${totalPlayers} ready:**\n` +
+      (lines.length > 0 ? lines.join('\n') : '*No players*')
+    )
+    .setTimestamp();
+}
+
+/**
+ * Builds the post-session summary embed showing who played and trinket payouts.
+ */
+function buildSessionSummaryEmbed(game, queueData) {
+  const {
+    sessionPaidPlayers = [],
+    sessionPaidFill = [],
+    fillAfterSession = [],
+    sessionStartedAt,
+  } = queueData;
+
+  const playerLines = sessionPaidPlayers.map(p =>
+    p.amount > 0 ? `• <@${p.userId}> — **+${p.amount} 🪙**` : `• <@${p.userId}>`
+  );
+  const fillLines = [
+    ...sessionPaidFill.map(p =>
+      p.amount > 0 ? `• <@${p.userId}> — **+${p.amount} 🪙**` : `• <@${p.userId}>`
+    ),
+    ...fillAfterSession.map(p => `• <@${p.userId}>`),
+  ];
+
+  let description = `**Playing (${sessionPaidPlayers.length}):**\n`;
+  description += playerLines.length > 0 ? playerLines.join('\n') : '*None*';
+  description += '\n\n**Fill:**\n';
+  description += fillLines.length > 0 ? fillLines.join('\n') : '*None*';
+
+  return new EmbedBuilder()
+    .setColor('#57F287')
+    .setTitle(`🎮 ${game} — Session Started!`)
+    .setDescription(description)
+    .setFooter({ text: 'Session started' })
+    .setTimestamp(sessionStartedAt ? sessionStartedAt * 1000 : Date.now());
+}
+
+/**
+ * Returns an ActionRow with a single "Join as Fill" button for post-session joining.
+ */
+function buildSessionFillRow(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:session_fill:${game}`)
+      .setLabel('Join as Fill')
+      .setEmoji('🔄')
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+/**
  * Builds a closed-state embed for a queue that has ended.
  */
 function buildClosedQueueEmbed(game) {
@@ -178,7 +251,10 @@ module.exports = {
   buildQueueEmbed,
   buildQueueComponents,
   buildReadyUpRow,
+  buildReadyStatusEmbed,
   buildSessionPromptRow,
+  buildSessionSummaryEmbed,
+  buildSessionFillRow,
   buildClosedQueueEmbed,
   buildClosedQueueComponents,
 };

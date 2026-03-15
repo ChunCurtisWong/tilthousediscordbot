@@ -97,28 +97,13 @@ async function sendSessionPrompt(channel, game, queueData) {
   const host = queueData.players?.[0];
   if (!host) return;
 
-  const totalPlayers = queueData.players.length;
-  const readyCount   = (queueData.readyPlayers ?? []).length;
-
-  let description;
-  if (readyCount >= totalPlayers) {
-    description =
-      `All **${totalPlayers}** player${totalPlayers !== 1 ? 's' : ''} have readied up!\n\n` +
-      `Has the gaming session started? Click **Yes** to pay out Trinkets or **No** to close without payout.`;
-  } else {
-    description =
-      `Ready-up window closed — **${readyCount}/${totalPlayers}** players were ready. ` +
-      `Non-ready players have been moved to fill.\n\n` +
-      `Has the gaming session started? Click **Yes** to pay out Trinkets or **No** to close without payout.`;
-  }
-
   await channel.send({
     content: `<@${host.userId}>`,
     embeds: [
       new EmbedBuilder()
         .setColor('#5865F2')
         .setTitle(`🎮 ${game} — Has the session started?`)
-        .setDescription(description)
+        .setDescription('Has the session started?')
         .setTimestamp(),
     ],
     components: [buildSessionPromptRow(game)],
@@ -202,6 +187,14 @@ async function runQueueCheck(client, isStartup = false) {
   const now    = Math.floor(Date.now() / 1000);
 
   for (const [game, queueData] of Object.entries(queues)) {
+    // ── Session already started — clean up after 3 hours ──────────────
+    if (queueData.sessionStarted) {
+      if (queueData.sessionStartedAt && now - queueData.sessionStartedAt > 10800) {
+        storage.deleteQueue(game);
+      }
+      continue;
+    }
+
     const { scheduledTime, min, max, thresholdHitAt, fulfilledAt, channelId } = queueData;
 
     // ── CASE A: Scheduled time set ───────────────────────────────────
@@ -220,7 +213,7 @@ async function runQueueCheck(client, isStartup = false) {
             const ch       = await client.channels.fetch(channelId);
             const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
             const minLeft  = Math.ceil(timeUntil / 60);
-            await ch.send({
+            const sentMsg  = await ch.send({
               content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
               embeds: [
                 new EmbedBuilder()
@@ -235,6 +228,8 @@ async function runQueueCheck(client, isStartup = false) {
               ],
               components: [buildReadyUpRow(game)],
             });
+            queueData.readyMessageId = sentMsg.id;
+            storage.saveQueue(game, queueData);
             logger.info('Reminder sent with ready-up button', { game, scheduledTime });
           } catch (err) {
             logger.error('Failed to send reminder', { game, error: err.message });
@@ -248,6 +243,30 @@ async function runQueueCheck(client, isStartup = false) {
         queueData.readyWindowEnd = scheduledTime + 600;
         queueData.readyPlayers   = queueData.readyPlayers ?? [];
         storage.saveQueue(game, queueData);
+      }
+
+      // ── All players ready — ask host at scheduled time ───────────
+      const allReady =
+        (queueData.readyPlayers ?? []).length >= (queueData.players ?? []).length &&
+        (queueData.players ?? []).length > 0;
+      if (
+        !isStartup &&
+        !queueData.sessionPromptSent &&
+        queueData.readyWindowEnd &&
+        allReady &&
+        scheduledTime <= now
+      ) {
+        queueData.sessionPromptSent = true;
+        storage.saveQueue(game, queueData);
+        if (channelId) {
+          try {
+            const ch = await client.channels.fetch(channelId);
+            await sendSessionPrompt(ch, game, queueData);
+            logger.info('All ready — session prompt sent at scheduled time', { game });
+          } catch (err) {
+            logger.error('Failed to send session prompt (all ready at scheduled time)', { game, error: err.message });
+          }
+        }
       }
 
       // ── Ready-up window expiry ────────────────────────────────────

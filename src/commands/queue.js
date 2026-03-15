@@ -8,6 +8,7 @@ const logger  = require('../utils/logger');
 const storage = require('../utils/storage');
 const {
   buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
+  buildReadyStatusEmbed, buildSessionSummaryEmbed, buildSessionFillRow,
   buildClosedQueueEmbed, buildClosedQueueComponents,
 } = require('../utils/embeds');
 const { payoutQueue }  = require('../utils/trinkets');
@@ -178,6 +179,17 @@ async function refreshEmbed(interaction, game, queueData) {
   const msg = await channel.send({ content, embeds: [embed], components });
   queueData.messageId = msg.id;
   queueData.channelId = channel.id;
+}
+
+// ─── Message deletion helper ─────────────────────────────────────────────────
+
+async function deleteMessageById(client, channelId, messageId) {
+  if (!channelId || !messageId) return;
+  try {
+    const ch  = await client.channels.fetch(channelId);
+    const msg = await ch.messages.fetch(messageId);
+    await msg.delete();
+  } catch { /* already deleted or inaccessible */ }
 }
 
 // ─── Host prompt (Case C) ─────────────────────────────────────────────────────
@@ -865,24 +877,38 @@ module.exports = {
     }
 
     queueData.readyPlayers.push(userId);
+    if (!queueData.readyMessageId) queueData.readyMessageId = interaction.message.id;
     storage.saveQueue(game, queueData);
 
     const totalPlayers = queueData.players.length;
     const readyCount   = queueData.readyPlayers.length;
+    const allReady     = readyCount >= totalPlayers;
+
+    // Update the ready-up embed with live per-player status
+    await interaction.editReply({
+      embeds: [buildReadyStatusEmbed(game, queueData)],
+      components: allReady ? [] : [buildReadyUpRow(game)],
+    });
 
     await interaction.followUp({
       content: `✅ You're ready for **${game}**! (${readyCount}/${totalPlayers} ready)`,
       flags: 64,
     });
 
-    // If all players are ready, send host session prompt immediately
-    if (readyCount >= totalPlayers) {
-      queueData.sessionPromptSent = true;
-      storage.saveQueue(game, queueData);
-
-      const channel = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
-      await sendSessionPrompt(channel, game, queueData);
-      logger.info('All players ready, session prompt sent', { game, readyCount });
+    // All ready — send host prompt now if scheduled time has passed; otherwise let poller handle it
+    if (allReady) {
+      const now = Math.floor(Date.now() / 1000);
+      if (!queueData.scheduledTime || queueData.scheduledTime <= now) {
+        queueData.sessionPromptSent = true;
+        storage.saveQueue(game, queueData);
+        const channel = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+        await sendSessionPrompt(channel, game, queueData);
+        logger.info('All players ready — session prompt sent immediately', { game, readyCount });
+      } else {
+        logger.info('All players ready — waiting for scheduled time to prompt host', {
+          game, readyCount, scheduledTime: queueData.scheduledTime,
+        });
+      }
     }
   },
 
@@ -895,16 +921,46 @@ module.exports = {
       return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
+    // Compute payout (filter fill to window only)
+    const windowStartSec = queueData.thresholdHitAt ?? queueData.fulfilledAt ?? queueData.scheduledTime;
+    const windowStartMs  = windowStartSec ? windowStartSec * 1000 : 0;
+    const filteredFill   = (queueData.fill ?? []).filter(p => p.joinedAt >= windowStartMs);
+    const payoutResult   = await payoutQueue({ ...queueData, fill: filteredFill });
+
+    // Build payout maps
+    const playerAmountMap = new Map();
+    const fillAmountMap   = new Map();
+    if (payoutResult?.ok) {
+      for (const p of payoutResult.playerPayouts) playerAmountMap.set(p.userId, p.amount);
+      for (const p of payoutResult.fillPayouts)   fillAmountMap.set(p.userId, p.amount);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // Transition queue to session-started state
+    queueData.sessionStarted     = true;
+    queueData.sessionStartedAt   = now;
+    queueData.sessionPaidPlayers = queueData.players.map(p => ({
+      userId: p.userId, amount: playerAmountMap.get(p.userId) ?? 0,
+    }));
+    queueData.sessionPaidFill  = filteredFill.map(p => ({
+      userId: p.userId, amount: fillAmountMap.get(p.userId) ?? 0,
+    }));
+    queueData.fillAfterSession = [];
+    storage.saveQueue(game, queueData);
+
+    // Replace host confirmation with session summary
     await interaction.update({
-      content: `✅ **${game}** session confirmed — paying out Trinkets!`,
-      components: [],
+      content: null,
+      embeds:  [buildSessionSummaryEmbed(game, queueData)],
+      components: [buildSessionFillRow(game)],
     });
 
-    const payoutResult = await payoutQueue(queueData);
-    await markQueueEmbedClosed(interaction.client, game, queueData);
-    await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult, queueData);
-    storage.deleteQueue(game);
-    logger.info('Queue closed: session confirmed by host', { game, userId });
+    // Delete original queue embed and ready-up message
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.messageId);
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
+
+    logger.info('Queue session started', { game, userId });
   },
 
   // ── Session prompt: No ──────────────────────────────────────────
@@ -917,13 +973,55 @@ module.exports = {
     }
 
     await interaction.update({
-      content: `❌ **${game}** session was not confirmed — no Trinkets paid out.`,
+      content: null,
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#888888')
+          .setTitle(`⏹️ ${game} — Session Not Started`)
+          .setDescription('The host confirmed the session did not start — no Trinkets awarded.')
+          .setTimestamp(),
+      ],
       components: [],
     });
 
     await markQueueEmbedClosed(interaction.client, game, queueData);
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
     logger.info('Queue closed: session denied by host', { game, userId });
+  },
+
+  // ── Session fill button ─────────────────────────────────────────
+  async handleSessionFill(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
+
+    if (!queueData?.sessionStarted) {
+      return interaction.followUp({ content: '❌ This session is no longer active.', flags: 64 });
+    }
+
+    const alreadyIn = [
+      ...(queueData.sessionPaidPlayers ?? []),
+      ...(queueData.sessionPaidFill    ?? []),
+      ...(queueData.fillAfterSession   ?? []),
+    ].some(p => p.userId === userId);
+
+    if (alreadyIn) {
+      return interaction.followUp({ content: `❌ You are already in the **${game}** session.`, flags: 64 });
+    }
+
+    queueData.fillAfterSession = queueData.fillAfterSession ?? [];
+    queueData.fillAfterSession.push({ userId, username });
+    storage.saveQueue(game, queueData);
+
+    await interaction.editReply({
+      content: null,
+      embeds:  [buildSessionSummaryEmbed(game, queueData)],
+      components: [buildSessionFillRow(game)],
+    });
+
+    logger.info('Player joined session fill', { userId, game });
   },
 
   // ── Host prompt: Fulfilled ──────────────────────────────────────
