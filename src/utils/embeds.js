@@ -120,6 +120,19 @@ function buildQueueComponents(game) {
 }
 
 /**
+ * Returns an ActionRow with a single "Un-Ready" button sent ephemerally to a player.
+ */
+function buildUnreadyRow(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:unready:${game}`)
+      .setLabel('Un-Ready')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+/**
  * Returns an ActionRow with a single "Ready Up!" button for timed queues.
  */
 function buildReadyUpRow(game) {
@@ -273,6 +286,7 @@ function buildClosedQueueComponents() {
 module.exports = {
   buildQueueEmbed,
   buildQueueComponents,
+  buildUnreadyRow,
   buildReadyUpRow,
   buildReadyStatusEmbed,
   buildSessionPromptRow,
