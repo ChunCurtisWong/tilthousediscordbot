@@ -158,9 +158,10 @@ module.exports = {
       storage.saveList(listData); // persist messageId + channelId
 
       const added = players.length;
-      return interaction.editReply({
+      await interaction.editReply({
         content: `✅ List created!${added > 0 ? ` Added ${added} player${added !== 1 ? 's' : ''}.` : ''}`,
       });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
     }
 
     // ── /th-list add ─────────────────────────────────────────────────
@@ -186,7 +187,8 @@ module.exports = {
 
       await interaction.deferReply({ flags: 64 });
       await refreshListEmbed(interaction, listData);
-      return interaction.editReply({ content: `✅ Added <@${user.id}> to the list.` });
+      await interaction.editReply({ content: `✅ Added <@${user.id}> to the list.` });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
     }
 
     // ── /th-list clear ────────────────────────────────────────────────
@@ -256,7 +258,8 @@ module.exports = {
 
     // editReply on a deferUpdate-ed button interaction edits the button's own message (the list embed)
     await interaction.editReply({ embeds: [buildListEmbed(listData)], components: [buildListComponents()] });
-    return interaction.followUp({ content: '✅ You joined the list!', flags: 64 });
+    const joinMsg = await interaction.followUp({ content: '✅ You joined the list!', flags: 64 });
+    setTimeout(() => joinMsg.delete().catch(() => {}), 15_000);
   },
 
   // ── Button: Leave List ────────────────────────────────────────────────────
@@ -276,7 +279,8 @@ module.exports = {
     listData.players.splice(idx, 1);
     storage.saveList(listData);
     await interaction.editReply({ embeds: [buildListEmbed(listData)], components: [buildListComponents()] });
-    return interaction.followUp({ content: '✅ You left the list.', flags: 64 });
+    const leaveMsg = await interaction.followUp({ content: '✅ You left the list.', flags: 64 });
+    setTimeout(() => leaveMsg.delete().catch(() => {}), 15_000);
   },
 
   // ── Button: Confirm clear ─────────────────────────────────────────────────
@@ -304,7 +308,8 @@ module.exports = {
 
     storage.deleteList();
     logger.info('List cleared', { userId: interaction.user.id });
-    return interaction.editReply({ content: '✅ The list has been cleared.', components: [] });
+    await interaction.editReply({ content: '✅ The list has been cleared.', components: [] });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 
   // ── Button: Cancel clear ──────────────────────────────────────────────────

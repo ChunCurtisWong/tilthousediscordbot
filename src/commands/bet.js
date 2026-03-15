@@ -251,12 +251,13 @@ module.exports = {
       components: [buildButtons(betId, true)],
     });
 
-    // Ephemeral balance reveal — only visible to the accepter (button interactor)
+    // Ephemeral balance reveal — only visible to the accepter (auto-deletes after 15s)
     const accepterNewBal = interaction.user.id === winnerId ? winnerNewBal : loserNewBal;
-    await interaction.followUp({
+    const balMsg = await interaction.followUp({
       content: `Your new balance: **${accepterNewBal} 🪙**`,
       flags: 64,
     });
+    setTimeout(() => balMsg.delete().catch(() => {}), 15_000);
   },
 
   // ─── Button: Decline ────────────────────────────────────────────────

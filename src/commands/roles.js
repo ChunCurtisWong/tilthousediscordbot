@@ -79,8 +79,9 @@ module.exports = {
     storage.saveRolesData({ messageId: msg.id, channelId: rolesChannel.id });
     logger.info('Reaction role embed posted', { messageId: msg.id, channelId: rolesChannel.id });
 
-    return interaction.editReply({
+    await interaction.editReply({
       content: `✅ Reaction role embed posted in ${rolesChannel}. All ${ACTIVE_ROLES.length} reactions added.`,
     });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 };

@@ -194,12 +194,27 @@ function parseTime(timeStr) {
   return null;
 }
 
-// ─── Response helper ──────────────────────────────────────────────────────────
+// ─── Response helpers ─────────────────────────────────────────────────────────
 
+// Essential messages: stay until the user dismisses them.
 function respond(interaction, opts) {
   if (!interaction.deferred) return interaction.reply({ ...opts, flags: 64 });
   if (interaction.isButton()) return interaction.followUp({ ...opts, flags: 64 });
   return interaction.editReply({ ...opts, components: [] });
+}
+
+// Non-essential confirmations: auto-delete after 15 seconds.
+async function respondAndDelete(interaction, opts) {
+  if (!interaction.deferred) {
+    await interaction.reply({ ...opts, flags: 64 });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+  } else if (interaction.isButton()) {
+    const msg = await interaction.followUp({ ...opts, flags: 64 });
+    setTimeout(() => msg.delete().catch(() => {}), 15_000);
+  } else {
+    await interaction.editReply({ ...opts, components: [] });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+  }
 }
 
 // ─── Bulleted player list ─────────────────────────────────────────────────────
@@ -499,14 +514,14 @@ async function processLeave(interaction, game, userId) {
       logger.info('Player left main queue', { userId, game, remaining: queueData.players.length });
     }
 
-    return respond(interaction, { content: `✅ You left the **${game}** queue.` });
+    return respondAndDelete(interaction, { content: `✅ You left the **${game}** queue.` });
   }
 
   queueData.fill.splice(fillIdx, 1);
   storage.saveQueue(game, queueData);
   await refreshEmbed(interaction, game, queueData);
   logger.info('Player left fill list', { userId, game, fillRemaining: queueData.fill.length });
-  return respond(interaction, { content: `✅ You've been removed from the **${game}** fill list.` });
+  return respondAndDelete(interaction, { content: `✅ You've been removed from the **${game}** fill list.` });
 }
 
 // ─── Clear logic ──────────────────────────────────────────────────────────────

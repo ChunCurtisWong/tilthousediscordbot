@@ -90,7 +90,9 @@ module.exports = {
         .setFooter({ text: `Saved for ${username}` })
         .setTimestamp();
 
-      return interaction.reply({ embeds: [embed], flags: 64 });
+      await interaction.reply({ embeds: [embed], flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     // ── /timezone view ──────────────────────────────────────────────
