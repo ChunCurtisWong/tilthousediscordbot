@@ -7,7 +7,7 @@ const {
 const logger  = require('../utils/logger');
 const storage = require('../utils/storage');
 const {
-  buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
+  buildQueueEmbed, buildQueueComponents, buildUnreadyRow, buildReadyUpRow,
   buildReadyStatusEmbed, buildSessionPromptRow, buildSessionNoOptionsRow,
   buildSessionSummaryEmbed, buildSessionFillRow,
   buildClosedQueueEmbed, buildClosedQueueComponents,
@@ -967,39 +967,94 @@ module.exports = {
     }
 
     if (!queueData.readyPlayers) queueData.readyPlayers = [];
-    if (queueData.readyPlayers.includes(userId)) {
-      return interaction.followUp({ content: `✅ You have already readied up for **${game}**!`, flags: 64 });
-    }
-
-    queueData.readyPlayers.push(userId);
     if (!queueData.readyMessageId) queueData.readyMessageId = interaction.message.id;
-    storage.saveQueue(game, queueData);
 
-    const totalPlayers = queueData.players.length;
-    const readyCount   = queueData.readyPlayers.length;
-    const allReady     = readyCount >= totalPlayers;
+    const alreadyReady = queueData.readyPlayers.includes(userId);
 
-    // Update the ready-up embed with live per-player status
-    await interaction.editReply({
-      embeds: [buildReadyStatusEmbed(game, queueData)],
-      components: allReady ? [] : [buildReadyUpRow(game)],
-    });
+    if (!alreadyReady) {
+      queueData.readyPlayers.push(userId);
+      storage.saveQueue(game, queueData);
 
-    // All ready — send host prompt now if scheduled time has passed; otherwise let poller handle it
-    if (allReady) {
-      const now = Math.floor(Date.now() / 1000);
-      if (!queueData.scheduledTime || queueData.scheduledTime <= now) {
-        queueData.sessionPromptSent = true;
-        storage.saveQueue(game, queueData);
-        const channel = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
-        await sendSessionPrompt(channel, game, queueData);
-        logger.info('All players ready — session prompt sent immediately', { game, readyCount });
-      } else {
-        logger.info('All players ready — waiting for scheduled time to prompt host', {
-          game, readyCount, scheduledTime: queueData.scheduledTime,
-        });
+      const totalPlayers = queueData.players.length;
+      const readyCount   = queueData.readyPlayers.length;
+      const allReady     = readyCount >= totalPlayers;
+
+      // Update the ready-up embed with live per-player status
+      await interaction.editReply({
+        embeds: [buildReadyStatusEmbed(game, queueData)],
+        components: allReady ? [] : [buildReadyUpRow(game)],
+      });
+
+      // All ready — send host prompt now if scheduled time has passed; otherwise let poller handle it
+      if (allReady) {
+        const now = Math.floor(Date.now() / 1000);
+        if (!queueData.scheduledTime || queueData.scheduledTime <= now) {
+          queueData.sessionPromptSent = true;
+          storage.saveQueue(game, queueData);
+          const channel = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+          await sendSessionPrompt(channel, game, queueData);
+          logger.info('All players ready — session prompt sent immediately', { game, readyCount });
+        } else {
+          logger.info('All players ready — waiting for scheduled time to prompt host', {
+            game, readyCount, scheduledTime: queueData.scheduledTime,
+          });
+        }
       }
     }
+
+    // Send ephemeral Un-Ready button (skip if session prompt already sent — window is closed)
+    if (!queueData.sessionPromptSent) {
+      await interaction.followUp({
+        content: alreadyReady
+          ? `✅ You're already ready for **${game}**!`
+          : `✅ You're ready for **${game}**!`,
+        components: [buildUnreadyRow(game)],
+        flags: 64,
+      });
+    }
+  },
+
+  // ── Un-Ready button (ephemeral) ─────────────────────────────────
+  async handleButtonUnready(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.readyWindowEnd || queueData.sessionPromptSent) {
+      return interaction.editReply({ content: '❌ The ready-up window has closed.', components: [] });
+    }
+
+    const isInQueue = queueData.players?.some(p => p.userId === userId);
+    if (!isInQueue) {
+      return interaction.editReply({ content: `❌ You are not in the **${game}** main queue.`, components: [] });
+    }
+
+    if (!queueData.readyPlayers?.includes(userId)) {
+      return interaction.editReply({ content: '❌ You have not readied up yet.', components: [] });
+    }
+
+    queueData.readyPlayers = queueData.readyPlayers.filter(id => id !== userId);
+    storage.saveQueue(game, queueData);
+
+    // Update the main ready-up message
+    if (queueData.readyMessageId && queueData.channelId) {
+      try {
+        const ch  = await interaction.client.channels.fetch(queueData.channelId);
+        const msg = await ch.messages.fetch(queueData.readyMessageId);
+        await msg.edit({
+          embeds:     [buildReadyStatusEmbed(game, queueData)],
+          components: [buildReadyUpRow(game)],
+        });
+      } catch { /* Main message gone — fine */ }
+    }
+
+    // Update the ephemeral to remove the Un-Ready button
+    await interaction.editReply({
+      content:    `⏳ You've un-readied for **${game}**. Click **Ready Up!** in the channel to ready up again.`,
+      components: [],
+    });
+
+    logger.info('Player un-readied', { userId, game });
   },
 
   // ── Session prompt: Yes ─────────────────────────────────────────
