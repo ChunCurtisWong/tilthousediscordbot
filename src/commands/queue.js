@@ -405,6 +405,38 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
         ],
       });
     }
+
+    // Immediate ready-up: fire now if scheduled time is < 10 minutes away
+    const timeUntil = scheduledTime - Math.floor(Date.now() / 1000);
+    if (timeUntil <= 600 && timeUntil > 0 && !queueData.reminderSent) {
+      queueData.reminderSent   = true;
+      queueData.readyWindowEnd = scheduledTime + 600;
+      queueData.readyPlayers   = [];
+      storage.saveQueue(game, queueData);
+      const minLeft = Math.ceil(timeUntil / 60);
+      try {
+        const sentMsg = await channel.send({
+          content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#FFD700')
+              .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
+              .setDescription(
+                `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
+                `Click **Ready Up!** to confirm you'll be there.\n` +
+                `Ready-up window closes <t:${scheduledTime + 600}:R>.`
+              )
+              .setTimestamp(),
+          ],
+          components: [buildReadyUpRow(game)],
+        });
+        queueData.readyMessageId = sentMsg.id;
+        storage.saveQueue(game, queueData);
+        logger.info('Immediate ready-up reminder sent', { game, scheduledTime });
+      } catch (err) {
+        logger.error('Failed to send immediate ready-up reminder', { game, error: err.message });
+      }
+    }
     return;
   }
 
@@ -495,7 +527,8 @@ async function processClear(interaction, game, userId) {
   storage.deleteQueue(game);
   logger.info('Queue cleared', { userId, game });
 
-  return interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+  await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+  setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
 }
 
 // ─── Command definition ─────────────────────────────────────────────────────
@@ -731,7 +764,8 @@ module.exports = {
     }
 
     const n = gameNames.length;
-    return interaction.editReply({ content: `✅ Cleared **${n}** queue${n !== 1 ? 's' : ''}.`, components: [] });
+    await interaction.editReply({ content: `✅ Cleared **${n}** queue${n !== 1 ? 's' : ''}.`, components: [] });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 
   async handleStatusSelect(interaction) {
