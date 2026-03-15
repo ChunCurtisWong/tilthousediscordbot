@@ -285,11 +285,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
     const pos = queueData.fill.length;
     logger.info('Player added to fill list', { userId, game, fillPosition: pos });
-    return respond(interaction, {
-      content:
-        `✅ The **${game}** queue is full — you've been added to the fill list at position **#${pos}**.\n` +
-        `You'll be promoted automatically if a spot opens up!`,
-    });
+    return;
   }
 
   // Add to main queue
@@ -302,14 +298,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const count   = queueData.players.length;
   const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
 
-  let joinMsg = `✅ You joined the **${game}** queue!`;
-  if (max) joinMsg += ` (${count}/${max})`;
-  else if (min) joinMsg += ` (${count} joined, ${min} needed to start)`;
-  else joinMsg += ` (${count} in queue)`;
-  if (scheduledTime) joinMsg += `\n📅 Scheduled for <t:${scheduledTime}:F>`;
-
   logger.info('Player joined queue', { userId, game, count, min, max, scheduledTime });
-  await respond(interaction, { content: joinMsg });
 
   // ── Post-join notifications ──────────────────────────────────────
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
@@ -506,7 +495,10 @@ module.exports = {
       }
 
       await interaction.deferReply({ flags: 64 });
-      return processJoin(interaction, game, userId, username, { timeStr: timeStr || null, minOpt, maxOpt, roleId });
+      await processJoin(interaction, game, userId, username, { timeStr: timeStr || null, minOpt, maxOpt, roleId });
+      // Delete the deferred reply on success — the queue embed appearing is confirmation enough
+      if (!interaction.replied) interaction.deleteReply().catch(() => {});
+      return;
     }
 
     // ── /th-queue join ───────────────────────────────────────────────
@@ -721,14 +713,7 @@ module.exports = {
     await refreshEmbed(interaction, game, queueData);
     storage.saveQueue(game, queueData);
 
-    const pos = queueData.fill.length;
-    logger.info('Player joined fill list directly', { userId, game, fillPosition: pos });
-    return interaction.followUp({
-      content:
-        `✅ You've been added to the **${game}** fill list at position **#${pos}**.\n` +
-        `You'll be promoted automatically if a spot opens up!`,
-      flags: 64,
-    });
+    logger.info('Player joined fill list directly', { userId, game, fillPosition: queueData.fill.length });
   },
 
   // ── Edit Queue button (host only) ───────────────────────────────
@@ -916,8 +901,8 @@ module.exports = {
     });
 
     const payoutResult = await payoutQueue(queueData);
-    await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult);
     await markQueueEmbedClosed(interaction.client, game, queueData);
+    await sendCloseNotification(interaction.client, queueData.channelId, game, payoutResult, queueData);
     storage.deleteQueue(game);
     logger.info('Queue closed: session confirmed by host', { game, userId });
   },

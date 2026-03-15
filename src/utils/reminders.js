@@ -34,8 +34,13 @@ async function markQueueEmbedClosed(client, game, queueData) {
 }
 
 // ─── Shared close notification ────────────────────────────────────────────────
+// Sends a single combined "Queue Closed" embed (with payout lines if applicable).
+// Skips silently if fewer than 2 players were in the main queue.
 
-async function sendCloseNotification(client, channelId, game, payoutResult) {
+async function sendCloseNotification(client, channelId, game, payoutResult, queueData) {
+  // No notification for queues that never had enough players
+  if ((queueData?.players?.length ?? 0) < 2) return;
+
   if (!channelId) {
     logger.warn('sendCloseNotification: skipping — channelId is null', { game });
     return;
@@ -48,46 +53,42 @@ async function sendCloseNotification(client, channelId, game, payoutResult) {
     return;
   }
 
-  if (!payoutResult.ok) {
-    let description;
-    if (payoutResult.reason === 'insufficient_players') {
-      description = `The **${game}** queue has closed — not enough players joined.`;
-    } else if (payoutResult.reason === 'min_not_met') {
+  let color = '#888888';
+  let description;
+
+  if (!payoutResult?.ok) {
+    if (payoutResult?.reason === 'insufficient_players') {
+      description = `Not enough players joined — no Trinkets awarded.`;
+    } else if (payoutResult?.reason === 'min_not_met') {
       description =
-        `The **${game}** queue has closed — the minimum of **${payoutResult.required}** ` +
-        `player${payoutResult.required !== 1 ? 's' : ''} was not reached ` +
-        `(${payoutResult.count} joined).`;
+        `Minimum of **${payoutResult.required}** player${payoutResult.required !== 1 ? 's' : ''} not reached ` +
+        `(${payoutResult.count} joined) — no Trinkets awarded.`;
     } else {
-      description = `The **${game}** queue has closed.`;
+      description = `The queue has closed.`;
     }
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor('#888888')
-          .setTitle(`⏹️ Queue Closed: ${game}`)
-          .setDescription(description)
-          .setTimestamp(),
-      ],
-    }).catch(err => logger.error('sendCloseNotification: failed to send no-payout embed', { game, error: err.message }));
-    return;
+  } else {
+    const { playerPayouts, fillPayouts } = payoutResult;
+    const lines = [
+      ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
+      ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
+    ];
+    if (lines.length > 0) {
+      color = '#FFD700';
+      description = `Trinkets awarded!\n\n${lines.join('\n')}`;
+    } else {
+      description = `Queue closed — no players were eligible for Trinkets today.`;
+    }
   }
 
-  const { playerPayouts, fillPayouts } = payoutResult;
-  const payoutLines = [
-    ...playerPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙**`),
-    ...fillPayouts.map(p => `<@${p.userId}> — **+${p.amount} 🪙** (fill)`),
-  ];
-
-  if (payoutLines.length > 0) {
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor('#FFD700')
-          .setTitle('🪙 Trinket Payout')
-          .setDescription(`**${game}** queue closed — Trinkets awarded!\n\n${payoutLines.join('\n')}`),
-      ],
-    }).catch(err => logger.error('sendCloseNotification: failed to send payout embed', { game, error: err.message }));
-  }
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(color)
+        .setTitle(`⏹️ Queue Closed: ${game}`)
+        .setDescription(description)
+        .setTimestamp(),
+    ],
+  }).catch(err => logger.error('sendCloseNotification: failed to send embed', { game, error: err.message }));
 }
 
 // ─── Session prompt ────────────────────────────────────────────────────────────
@@ -132,21 +133,23 @@ async function closeQueue(client, game, queueData, { withPayout = false, reason 
   await markQueueEmbedClosed(client, game, queueData);
   storage.deleteQueue(game);
 
+  // No notification for queues with fewer than 2 players
+  if ((queueData.players?.length ?? 0) < 2) return;
+
   if (!queueData.channelId) return;
 
-  let channel;
-  try {
-    channel = await client.channels.fetch(queueData.channelId);
-  } catch (err) {
-    logger.error('closeQueue: could not fetch channel', { game, error: err.message });
-    return;
-  }
-
   if (!withPayout) {
+    let channel;
+    try {
+      channel = await client.channels.fetch(queueData.channelId);
+    } catch (err) {
+      logger.error('closeQueue: could not fetch channel', { game, error: err.message });
+      return;
+    }
     const descriptions = {
-      offline:    `The **${game}** queue was closed while the bot was offline. No Trinkets were awarded.`,
-      inactivity: `The **${game}** queue has closed due to inactivity.`,
-      default:    `The **${game}** queue has closed.`,
+      offline:    `Closed while the bot was offline — no Trinkets awarded.`,
+      inactivity: `Closed due to inactivity.`,
+      default:    `The queue has closed.`,
     };
     await channel.send({
       embeds: [
@@ -169,7 +172,7 @@ async function closeQueue(client, game, queueData, { withPayout = false, reason 
   };
 
   const payoutResult = await payoutQueue(filteredData);
-  await sendCloseNotification(client, queueData.channelId, game, payoutResult);
+  await sendCloseNotification(client, queueData.channelId, game, payoutResult, queueData);
 }
 
 // ─── Expire an active host prompt (auto-extend on timeout) ────────────────────
