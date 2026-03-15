@@ -1101,7 +1101,20 @@ module.exports = {
 
     await deleteMessageById(interaction.client, queueData.channelId, oldReadyMessageId);
 
-    await interaction.editReply({
+    // Refresh the queue embed with the new scheduled time
+    if (queueData.messageId && queueData.channelId) {
+      try {
+        const ch      = await interaction.client.channels.fetch(queueData.channelId);
+        const queueMsg = await ch.messages.fetch(queueData.messageId);
+        await queueMsg.edit({
+          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, queueData)],
+          components: [buildQueueComponents(game)],
+        });
+      } catch { /* Queue embed gone — fine */ }
+    }
+
+    const confirmMsg = await interaction.editReply({
       content: null,
       embeds: [
         new EmbedBuilder()
@@ -1112,6 +1125,7 @@ module.exports = {
       ],
       components: [],
     });
+    setTimeout(() => confirmMsg.delete().catch(() => {}), 10 * 60 * 1000);
 
     logger.info('Session extended by 30 minutes', { game, userId, newTime });
   },
@@ -1178,12 +1192,16 @@ module.exports = {
 
     await deleteMessageById(interaction.client, channelId, oldReadyMessageId);
 
-    // Update the session-no options message to confirm the change
+    // Refresh the queue embed with the new scheduled time
+    await refreshEmbed(interaction, game, queueData);
+    storage.saveQueue(game, queueData);
+
+    // Update the session-no options message to confirm the change, then auto-delete after 10 min
     if (sessionNoMessageId && channelId) {
       try {
         const ch  = await interaction.client.channels.fetch(channelId);
         const msg = await ch.messages.fetch(sessionNoMessageId);
-        await msg.edit({
+        const confirmMsg = await msg.edit({
           content: null,
           embeds: [
             new EmbedBuilder()
@@ -1194,6 +1212,7 @@ module.exports = {
           ],
           components: [],
         });
+        setTimeout(() => confirmMsg.delete().catch(() => {}), 10 * 60 * 1000);
       } catch { /* Message gone — fine */ }
     }
 
