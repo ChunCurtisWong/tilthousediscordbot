@@ -111,6 +111,10 @@ module.exports = {
             const game = customId.slice('q:host_clear:'.length);
             logger.info('Button: host clear', { game, userId: interaction.user.id });
             await queueCmd.handleHostClear(interaction, game);
+          } else if (customId.startsWith('q:session_fill:')) {
+            const game = customId.slice('q:session_fill:'.length);
+            logger.info('Button: session fill', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionFill(interaction, game);
           }
 
         // Gambling buttons
