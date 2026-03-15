@@ -120,15 +120,21 @@ function buildQueueComponents(game) {
 }
 
 /**
- * Returns an ActionRow with a single "Ready Up!" button for timed queues.
+ * Returns an ActionRow with "Ready Up" and "Un-Ready" buttons for timed queues.
+ * Both buttons are shared and affect only the player who clicks them.
  */
 function buildReadyUpRow(game) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`q:ready:${game}`)
-      .setLabel('Ready Up!')
+      .setLabel('Ready Up')
       .setEmoji('✋')
       .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`q:unready:${game}`)
+      .setLabel('Un-Ready')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
   );
 }
 
