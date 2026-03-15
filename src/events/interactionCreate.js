@@ -115,6 +115,18 @@ module.exports = {
             const game = customId.slice('q:session_fill:'.length);
             logger.info('Button: session fill', { game, userId: interaction.user.id });
             await queueCmd.handleSessionFill(interaction, game);
+          } else if (customId.startsWith('q:sno_extend:')) {
+            const game = customId.slice('q:sno_extend:'.length);
+            logger.info('Button: session no extend', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionNoExtend(interaction, game);
+          } else if (customId.startsWith('q:sno_newtime:')) {
+            const game = customId.slice('q:sno_newtime:'.length);
+            logger.info('Button: session no new time', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionNoNewTime(interaction, game);
+          } else if (customId.startsWith('q:sno_close:')) {
+            const game = customId.slice('q:sno_close:'.length);
+            logger.info('Button: session no close', { game, userId: interaction.user.id });
+            await queueCmd.handleSessionNoClose(interaction, game);
           }
 
         // Gambling buttons
@@ -238,6 +250,10 @@ module.exports = {
           const game = customId.slice('q:edit_modal:'.length);
           logger.info('Modal: queue edit', { game, userId: interaction.user.id });
           await interaction.client.commands.get('th-queue').handleEditModalSubmit(interaction, game);
+        } else if (customId.startsWith('q:sno_modal:')) {
+          const game = customId.slice('q:sno_modal:'.length);
+          logger.info('Modal: session no new time', { game, userId: interaction.user.id });
+          await interaction.client.commands.get('th-queue').handleSessionNoNewTimeSubmit(interaction, game);
         }
       } catch (err) {
         await safeError(interaction, err, 'Modal interaction error');

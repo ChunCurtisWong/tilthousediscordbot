@@ -133,6 +133,29 @@ function buildReadyUpRow(game) {
 }
 
 /**
+ * Returns an ActionRow with three recovery options shown after host clicks No.
+ */
+function buildSessionNoOptionsRow(game) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`q:sno_extend:${game}`)
+      .setLabel('Extend 30 Minutes')
+      .setEmoji('⏰')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`q:sno_newtime:${game}`)
+      .setLabel('Set New Time')
+      .setEmoji('🕐')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`q:sno_close:${game}`)
+      .setLabel('Close Queue')
+      .setEmoji('❌')
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+/**
  * Returns an ActionRow with Yes / No buttons for the host session prompt.
  */
 function buildSessionPromptRow(game) {
@@ -253,6 +276,7 @@ module.exports = {
   buildReadyUpRow,
   buildReadyStatusEmbed,
   buildSessionPromptRow,
+  buildSessionNoOptionsRow,
   buildSessionSummaryEmbed,
   buildSessionFillRow,
   buildClosedQueueEmbed,
