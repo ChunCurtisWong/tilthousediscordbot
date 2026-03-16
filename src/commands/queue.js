@@ -302,8 +302,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
 
   if (minOpt !== null && queueData.min === null) queueData.min = minOpt;
   if (maxOpt !== null && queueData.max === null) queueData.max = maxOpt;
-  if (minOpt !== null && maxOpt !== null && minOpt >= maxOpt) {
-    return respond(interaction, { content: '❌ `min` must be less than `max`.' });
+  if (minOpt !== null && maxOpt !== null && minOpt > maxOpt) {
+    return respond(interaction, { content: '❌ `min` cannot be higher than `max`.' });
   }
 
   if (timeStr && queueData.scheduledTime === null) {
@@ -436,32 +436,65 @@ async function processLeave(interaction, game, userId) {
   if (playerIdx !== -1) {
     queueData.players.splice(playerIdx, 1);
 
-    if (queueData.fill.length > 0) {
-      const promoted = queueData.fill.shift();
-      queueData.players.push(promoted);
-      logger.info('Fill player promoted to main queue', { promotedUserId: promoted.userId, game });
-      storage.saveQueue(game, queueData);
-      await refreshEmbed(interaction, game, queueData);
-
-      // If we're inside the ready-up window, the promoted player needs to ready up too
-      if (queueData.readyWindowEnd && !queueData.sessionPromptSent) {
-        await channel.send({
-          content:
-            `<@${promoted.userId}> You've been promoted to the **${game}** main queue! 🎮\n` +
-            `Please ready up before the window closes <t:${queueData.readyWindowEnd}:R>!`,
-          components: [buildReadyUpRow(game)],
-        });
-      } else {
-        await channel.send({
-          content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
-        });
-      }
-    } else {
-      storage.saveQueue(game, queueData);
-      await refreshEmbed(interaction, game, queueData);
-      logger.info('Player left main queue', { userId, game, remaining: queueData.players.length });
+    // Remove from readyPlayers if they were ready
+    if (queueData.readyPlayers) {
+      const rpIdx = queueData.readyPlayers.indexOf(userId);
+      if (rpIdx !== -1) queueData.readyPlayers.splice(rpIdx, 1);
     }
 
+    const inReadyWindow = !!(queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId && queueData.channelId);
+    const effectiveMin  = queueData.min ?? 2;
+
+    // Auto-promote fill if available
+    let promoted = null;
+    if (queueData.fill.length > 0) {
+      promoted = queueData.fill.shift();
+      queueData.players.push(promoted);
+      logger.info('Fill player promoted to main queue', { promotedUserId: promoted.userId, game });
+    }
+
+    storage.saveQueue(game, queueData);
+    await refreshEmbed(interaction, game, queueData);
+
+    if (inReadyWindow) {
+      // Update the ready-up message to reflect the new player list (promoted player shows ⏳)
+      try {
+        const readyMsg = await channel.messages.fetch(queueData.readyMessageId);
+        const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+        const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+        await readyMsg.edit({
+          content: queueData.players.length > 0
+            ? `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`
+            : `⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`,
+          embeds:     [buildReadyStatusEmbed(game, queueData)],
+          components: [buildReadyUpRow(game)],
+        });
+      } catch (err) {
+        logger.warn('Failed to update ready-up message after player leave', { game, error: err.message });
+      }
+
+      // If still below min after leave (and any fill promotion), ask host what to do
+      if (queueData.players.length < effectiveMin) {
+        const hostId = queueData.players[0]?.userId;
+        if (hostId) {
+          try {
+            await channel.send({
+              content:    `<@${hostId}> A player left and the **${game}** queue is below minimum. What would you like to do?`,
+              components: [buildSessionNoOptionsRow(game)],
+            });
+          } catch (err) {
+            logger.warn('Failed to send below-min host message after player leave', { game, error: err.message });
+          }
+        }
+      }
+    } else if (promoted) {
+      // Not in ready window — send regular promotion notification
+      await channel.send({
+        content: `<@${promoted.userId}> A spot opened up — you've been promoted from the fill list to the **${game}** main queue! 🎮`,
+      });
+    }
+
+    logger.info('Player left main queue', { userId, game, remaining: queueData.players.length });
     return respondAndDelete(interaction, { content: `✅ You left the **${game}** queue.` });
   }
 
@@ -556,8 +589,8 @@ module.exports = {
         }
       }
 
-      if (minOpt !== null && maxOpt !== null && minOpt >= maxOpt) {
-        return interaction.reply({ content: '❌ `min_players` must be less than `max_players`.', flags: 64 });
+      if (minOpt !== null && maxOpt !== null && minOpt > maxOpt) {
+        return interaction.reply({ content: '❌ `min_players` cannot be higher than `max_players`.', flags: 64 });
       }
 
       await interaction.deferReply({ flags: 64 });
@@ -939,8 +972,8 @@ module.exports = {
       queueData.max = maxVal === 0 ? null : maxVal;
     }
 
-    if (queueData.min !== null && queueData.max !== null && queueData.min >= queueData.max) {
-      return interaction.editReply({ content: '❌ Min players must be less than max players.' });
+    if (queueData.min !== null && queueData.max !== null && queueData.min > queueData.max) {
+      return interaction.editReply({ content: '❌ Min players cannot be higher than max players.' });
     }
 
     // Reset ready-up state if a ready-up message was active

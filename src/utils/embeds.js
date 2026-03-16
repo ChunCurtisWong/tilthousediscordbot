@@ -32,6 +32,9 @@ function buildQueueEmbed(game, queueData) {
   if (min === null && max === null) description += `\n👥 Players: Unlimited`;
   if (scheduledTime) {
     description += `\n\n📅 <t:${scheduledTime}:F> (<t:${scheduledTime}:R>)`;
+    if (queueData.extendedTo) {
+      description += `\n⏰ Rescheduled to <t:${queueData.extendedTo}:t>`;
+    }
 
     // Per-user local times for everyone (main + fill)
     const timezones = storage.getTimezones();
@@ -82,14 +85,6 @@ function buildQueueEmbed(game, queueData) {
     embed.addFields({
       name: '\u200b',
       value: '⚠️ Queue is full — you can still join as a fill player!',
-      inline: false,
-    });
-  }
-
-  if (queueData.extendedTo) {
-    embed.addFields({
-      name: '⏰ Extended',
-      value: `Rescheduled to <t:${queueData.extendedTo}:t>`,
       inline: false,
     });
   }
