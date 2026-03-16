@@ -286,34 +286,6 @@ async function maybePromptHost(channel, game, queueData) {
   storage.saveQueue(game, queueData);
 }
 
-// ─── Threshold notification (Case B) ─────────────────────────────────────────
-
-async function sendThresholdNotification(channel, game, queueData, type) {
-  const { players, min, max, thresholdHitAt } = queueData;
-  const closeTs  = thresholdHitAt + 1800;
-
-  let title, desc, color;
-  if (type === 'max') {
-    title = `🔒 ${game} — Queue Full!`;
-    desc  =
-      `The queue is full with **${players.length}/${max}** players.\n` +
-      `Closing <t:${closeTs}:R> — fill spots still available until then!\n\n` +
-      `**Players:**\n${bulletList(players)}`;
-    color = '#FF6B6B';
-  } else {
-    title = `✅ ${game} — Minimum Reached!`;
-    desc  =
-      `**${players.length}** players joined — minimum of **${min}** met!\n` +
-      `Closing <t:${closeTs}:R>.\n\n` +
-      `**Players:**\n${bulletList(players)}`;
-    color = '#00FF7F';
-  }
-
-  await channel.send({
-    embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(desc).setTimestamp()],
-  });
-}
-
 // ─── Join logic ───────────────────────────────────────────────────────────────
 
 async function processJoin(interaction, game, userId, username, { minOpt, maxOpt, timeStr, roleId = null }) {
@@ -361,8 +333,6 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
     if (!scheduledTime && !queueData.thresholdHitAt) {
       queueData.thresholdHitAt = Math.floor(Date.now() / 1000);
       storage.saveQueue(game, queueData);
-      const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
-      await sendThresholdNotification(channel, game, queueData, 'max');
     }
 
     const pos = queueData.fill.length;
@@ -377,6 +347,21 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
 
+  // If a ready-up window is already active, update the message content to ping the new player
+  if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId && queueData.channelId) {
+    try {
+      const rch      = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+      const readyMsg = await rch.messages.fetch(queueData.readyMessageId);
+      const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+      const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+      await readyMsg.edit({
+        content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+        embeds:     [buildReadyStatusEmbed(game, queueData)],
+        components: [buildReadyUpRow(game)],
+      });
+    } catch { /* ready message gone — ignore */ }
+  }
+
   const count   = queueData.players.length;
   const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
 
@@ -386,36 +371,6 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
   if (scheduledTime) {
-    if (max !== null && count >= max) {
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#FF6B6B')
-            .setTitle(`🔒 ${game} — Queue Full!`)
-            .setDescription(
-              `The queue is full with **${count}/${max}** players.\n` +
-              `A ready-up check will begin 10 minutes before the session starts!\n\n` +
-              `**Players:**\n${bulletList(queueData.players)}`
-            )
-            .setTimestamp(),
-        ],
-      });
-    } else if (min !== null && count === min) {
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#00FF7F')
-            .setTitle(`✅ ${game} — Minimum Reached!`)
-            .setDescription(
-              `**${count}** players joined — minimum of **${min}** met!\n` +
-              `Session starts <t:${scheduledTime}:R>.\n\n` +
-              `**Players:**\n${bulletList(queueData.players)}`
-            )
-            .setTimestamp(),
-        ],
-      });
-    }
-
     // Immediate ready-up: fire now if scheduled time is < 10 minutes away
     const timeUntil = scheduledTime - Math.floor(Date.now() / 1000);
     if (timeUntil <= 600 && timeUntil > 0 && !queueData.reminderSent) {
@@ -454,11 +409,9 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   if (max !== null && count >= max && !queueData.thresholdHitAt) {
     queueData.thresholdHitAt = Math.floor(Date.now() / 1000);
     storage.saveQueue(game, queueData);
-    await sendThresholdNotification(channel, game, queueData, 'max');
   } else if (min !== null && count >= min && !queueData.thresholdHitAt) {
     queueData.thresholdHitAt = Math.floor(Date.now() / 1000);
     storage.saveQueue(game, queueData);
-    await sendThresholdNotification(channel, game, queueData, 'min');
   } else if (min === null && max === null && count > 1) {
     // Case C: no limits — prompt the host
     await maybePromptHost(channel, game, queueData);
@@ -814,12 +767,15 @@ module.exports = {
       storage.saveQueue(game, queueData);
       await refreshEmbed(interaction, game, queueData);
 
-      // If a ready-up window is active, add the player to the embed with ⏳
+      // If a ready-up window is active, update both the content ping list and the embed
       if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId) {
         try {
           const ch       = await interaction.client.channels.fetch(queueData.channelId);
           const readyMsg = await ch.messages.fetch(queueData.readyMessageId);
+          const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+          const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
           await readyMsg.edit({
+            content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
             embeds:     [buildReadyStatusEmbed(game, queueData)],
             components: [buildReadyUpRow(game)],
           });
