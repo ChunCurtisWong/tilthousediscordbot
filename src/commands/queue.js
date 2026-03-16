@@ -1173,14 +1173,17 @@ module.exports = {
     // Refresh the queue embed with the new scheduled time and extension note
     if (queueData.messageId && queueData.channelId) {
       try {
-        const ch      = await interaction.client.channels.fetch(queueData.channelId);
+        const ch       = await interaction.client.channels.fetch(queueData.channelId);
         const queueMsg = await ch.messages.fetch(queueData.messageId);
+        const freshData = storage.getQueue(game);
         await queueMsg.edit({
-          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
-          embeds:     [buildQueueEmbed(game, queueData)],
+          content:    freshData.roleId ? `<@&${freshData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, freshData)],
           components: [buildQueueComponents(game)],
         });
-      } catch { /* Queue embed gone — fine */ }
+      } catch (err) {
+        logger.warn('Failed to update queue embed after 30-min extension', { game, error: err.message });
+      }
     }
 
     await interaction.editReply({
@@ -1270,14 +1273,17 @@ module.exports = {
     // Refresh the queue embed with the new scheduled time and extension note
     if (queueData.messageId && channelId) {
       try {
-        const ch      = await interaction.client.channels.fetch(channelId);
+        const ch       = await interaction.client.channels.fetch(channelId);
         const queueMsg = await ch.messages.fetch(queueData.messageId);
+        const freshData = storage.getQueue(game);
         await queueMsg.edit({
-          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
-          embeds:     [buildQueueEmbed(game, queueData)],
+          content:    freshData.roleId ? `<@&${freshData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, freshData)],
           components: [buildQueueComponents(game)],
         });
-      } catch { /* Queue embed gone — fine */ }
+      } catch (err) {
+        logger.warn('Failed to update queue embed after new-time reschedule', { game, error: err.message });
+      }
     }
 
     // Update the session-no options message to confirm the change (deleted later when ready-up reposts)
