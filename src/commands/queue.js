@@ -1135,6 +1135,54 @@ module.exports = {
     logger.info('Queue session started', { game, userId });
   },
 
+  // ── Start Now button (host skips ready-up and session prompt) ────
+  async handleStartNow(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+
+    if (!queueData.players?.length || queueData.players[0].userId !== userId) {
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
+    }
+
+    // Pay out Trinkets now — bypass min check, pay all current fill (no window filter)
+    const payoutResult = await payoutQueue({ ...queueData, min: null });
+    const playerAmountMap = new Map();
+    const fillAmountMap   = new Map();
+    if (payoutResult?.ok) {
+      for (const p of payoutResult.playerPayouts) playerAmountMap.set(p.userId, p.amount);
+      for (const p of payoutResult.fillPayouts)   fillAmountMap.set(p.userId, p.amount);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    queueData.sessionStarted     = true;
+    queueData.sessionStartedAt   = now;
+    queueData.sessionPaidPlayers = (queueData.players ?? []).map(p => ({
+      userId: p.userId, amount: playerAmountMap.get(p.userId) ?? 0,
+    }));
+    queueData.sessionPaidFill    = (queueData.fill ?? []).map(p => ({
+      userId: p.userId, amount: fillAmountMap.get(p.userId) ?? 0,
+    }));
+    queueData.fillAfterSession    = [];
+    queueData.playersAfterSession = [];
+    storage.saveQueue(game, queueData);
+
+    // Delete ready-up message if it was already posted
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
+
+    // Post session summary as a new channel message
+    const channel = await interaction.client.channels.fetch(queueData.channelId);
+    await channel.send({
+      embeds:     [buildSessionSummaryEmbed(game, queueData)],
+      components: [buildSessionJoinRow(game, queueData)],
+    });
+
+    // Delete the queue embed (the message this button was on)
+    await interaction.deleteReply();
+
+    logger.info('Queue started immediately by host (Start Now)', { game, userId });
+  },
+
   // ── Session prompt: No ──────────────────────────────────────────
   async handleSessionNo(interaction, game) {
     const queueData = storage.getQueue(game);
@@ -1215,6 +1263,7 @@ module.exports = {
       ],
       components: [],
     });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 60_000);
 
     logger.info('Session extended by 30 minutes', { game, userId, newTime });
   },
@@ -1304,7 +1353,7 @@ module.exports = {
       }
     }
 
-    // Update the session-no options message to confirm the change (deleted later when ready-up reposts)
+    // Update the session-no options message to confirm the change, then delete after 1 minute
     if (sessionNoMessageId && channelId) {
       try {
         const ch  = await interaction.client.channels.fetch(channelId);
@@ -1320,6 +1369,7 @@ module.exports = {
           ],
           components: [],
         });
+        setTimeout(() => msg.delete().catch(() => {}), 60_000);
       } catch { /* Message gone — fine */ }
     }
 
@@ -1336,6 +1386,7 @@ module.exports = {
       return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
+    const promptMessage = interaction.message;
     await interaction.update({
       content: null,
       embeds: [
@@ -1347,6 +1398,7 @@ module.exports = {
       ],
       components: [],
     });
+    setTimeout(() => promptMessage.delete().catch(() => {}), 60_000);
 
     await deleteMessageById(interaction.client, queueData.channelId, queueData.messageId);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
