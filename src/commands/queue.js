@@ -290,7 +290,6 @@ async function maybePromptHost(channel, game, queueData) {
 
 async function sendThresholdNotification(channel, game, queueData, type) {
   const { players, min, max, thresholdHitAt } = queueData;
-  const pingList = players.map(p => `<@${p.userId}>`).join(' ');
   const closeTs  = thresholdHitAt + 1800;
 
   let title, desc, color;
@@ -311,7 +310,6 @@ async function sendThresholdNotification(channel, game, queueData, type) {
   }
 
   await channel.send({
-    content: pingList,
     embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(desc).setTimestamp()],
   });
 }
@@ -388,10 +386,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
   if (scheduledTime) {
-    // Case A: notify on thresholds — Trinket payout controlled by host, not a timer
     if (max !== null && count >= max) {
       await channel.send({
-        content: `${pingList}\n🔒 The **${game}** queue is full!`,
         embeds: [
           new EmbedBuilder()
             .setColor('#FF6B6B')
@@ -405,9 +401,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
         ],
       });
     } else if (min !== null && count === min) {
-      // Ping only at the exact moment min is first reached
       await channel.send({
-        content: `${pingList}\n✅ The **${game}** queue has enough players!`,
         embeds: [
           new EmbedBuilder()
             .setColor('#00FF7F')
@@ -800,7 +794,28 @@ module.exports = {
 
   async handleButtonJoin(interaction, game) {
     await interaction.deferUpdate();
-    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
+
+    if (!queueData.fill) queueData.fill = [];
+
+    const fillIdx = queueData.fill.findIndex(p => p.userId === userId);
+    if (fillIdx !== -1) {
+      // Player is on the fill list — move to main queue if a spot is open
+      const { max } = queueData;
+      if (max !== null && queueData.players.length >= max) return; // full — silent ignore
+      queueData.fill.splice(fillIdx, 1);
+      queueData.players.push({ userId, username, joinedAt: Date.now() });
+      queueData.lastActivityAt = Date.now();
+      storage.saveQueue(game, queueData);
+      await refreshEmbed(interaction, game, queueData);
+      storage.saveQueue(game, queueData);
+      logger.info('Player moved from fill list to main queue', { userId, game });
+      return;
+    }
+
+    return processJoin(interaction, game, userId, username, {
       minOpt: null, maxOpt: null, timeStr: null,
     });
   },
