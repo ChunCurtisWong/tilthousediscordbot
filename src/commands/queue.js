@@ -534,6 +534,7 @@ async function processClear(interaction, game, userId) {
   }
 
   await markQueueEmbedClosed(interaction.client, game, queueData);
+  await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
   storage.deleteQueue(game);
   logger.info('Queue cleared', { userId, game });
 
@@ -769,7 +770,9 @@ module.exports = {
     logger.info('Clearing all queues', { userId, count: gameNames.length });
 
     for (const game of gameNames) {
-      await markQueueEmbedClosed(interaction.client, game, queues[game]);
+      const q = queues[game];
+      await markQueueEmbedClosed(interaction.client, game, q);
+      await deleteMessageById(interaction.client, q.channelId, q.readyMessageId);
       storage.deleteQueue(game);
     }
 
@@ -1139,6 +1142,9 @@ module.exports = {
     queueData.fillAfterSession = [];
     storage.saveQueue(game, queueData);
 
+    // Delete ready-up message before session summary appears
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
+
     // Replace host confirmation with session summary
     await interaction.update({
       content: null,
@@ -1146,9 +1152,8 @@ module.exports = {
       components: [buildSessionFillRow(game)],
     });
 
-    // Delete original queue embed and ready-up message
+    // Delete original queue embed
     await deleteMessageById(interaction.client, queueData.channelId, queueData.messageId);
-    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
 
     logger.info('Queue session started', { game, userId });
   },
@@ -1304,8 +1309,17 @@ module.exports = {
     await deleteMessageById(interaction.client, channelId, oldReadyMessageId);
 
     // Refresh the queue embed with the new scheduled time and extension note
-    await refreshEmbed(interaction, game, queueData);
-    storage.saveQueue(game, queueData);
+    if (queueData.messageId && channelId) {
+      try {
+        const ch      = await interaction.client.channels.fetch(channelId);
+        const queueMsg = await ch.messages.fetch(queueData.messageId);
+        await queueMsg.edit({
+          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, queueData)],
+          components: [buildQueueComponents(game)],
+        });
+      } catch { /* Queue embed gone — fine */ }
+    }
 
     // Update the session-no options message to confirm the change (deleted later when ready-up reposts)
     if (sessionNoMessageId && channelId) {
@@ -1459,6 +1473,7 @@ module.exports = {
     }
 
     await markQueueEmbedClosed(interaction.client, game, queueData);
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
 
     await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });

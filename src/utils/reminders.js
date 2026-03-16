@@ -116,6 +116,16 @@ async function closeQueue(client, game, queueData, { withPayout = false, reason 
   logger.info('Closing queue', { game, withPayout, reason });
 
   await markQueueEmbedClosed(client, game, queueData);
+
+  // Delete the ready-up message if it was still visible
+  if (queueData.readyMessageId && queueData.channelId) {
+    try {
+      const ch  = await client.channels.fetch(queueData.channelId);
+      const msg = await ch.messages.fetch(queueData.readyMessageId);
+      await msg.delete();
+    } catch { /* Already gone — fine */ }
+  }
+
   storage.deleteQueue(game);
 
   // No notification for queues with fewer than 2 players
