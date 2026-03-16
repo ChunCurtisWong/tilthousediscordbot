@@ -1191,17 +1191,22 @@ module.exports = {
     const newTime          = now + 1800;
     const oldReadyMessageId = queueData.readyMessageId;
 
-    queueData.scheduledTime     = newTime;
-    queueData.reminderSent      = false;
-    queueData.readyWindowEnd    = null;
-    queueData.readyPlayers      = [];
-    queueData.readyMessageId    = null;
-    queueData.sessionPromptSent = false;
+    queueData.scheduledTime          = newTime;
+    queueData.extendedTo             = newTime;
+    queueData.reminderSent           = false;
+    queueData.readyWindowEnd         = null;
+    queueData.readyPlayers           = [];
+    queueData.readyMessageId         = null;
+    queueData.sessionPromptSent      = false;
+    queueData.pendingDeleteMessageIds = [
+      ...(queueData.pendingDeleteMessageIds ?? []),
+      interaction.message.id,
+    ];
     storage.saveQueue(game, queueData);
 
     await deleteMessageById(interaction.client, queueData.channelId, oldReadyMessageId);
 
-    // Refresh the queue embed with the new scheduled time
+    // Refresh the queue embed with the new scheduled time and extension note
     if (queueData.messageId && queueData.channelId) {
       try {
         const ch      = await interaction.client.channels.fetch(queueData.channelId);
@@ -1214,7 +1219,7 @@ module.exports = {
       } catch { /* Queue embed gone — fine */ }
     }
 
-    const confirmMsg = await interaction.editReply({
+    await interaction.editReply({
       content: null,
       embeds: [
         new EmbedBuilder()
@@ -1225,7 +1230,6 @@ module.exports = {
       ],
       components: [],
     });
-    setTimeout(() => confirmMsg.delete().catch(() => {}), 10 * 60 * 1000);
 
     logger.info('Session extended by 30 minutes', { game, userId, newTime });
   },
@@ -1281,27 +1285,34 @@ module.exports = {
     const sessionNoMessageId = queueData.sessionNoMessageId;
     const channelId          = queueData.channelId;
 
-    queueData.scheduledTime      = ts;
-    queueData.reminderSent       = false;
-    queueData.readyWindowEnd     = null;
-    queueData.readyPlayers       = [];
-    queueData.readyMessageId     = null;
-    queueData.sessionNoMessageId = null;
-    queueData.sessionPromptSent  = false;
+    queueData.scheduledTime           = ts;
+    queueData.extendedTo              = ts;
+    queueData.reminderSent            = false;
+    queueData.readyWindowEnd          = null;
+    queueData.readyPlayers            = [];
+    queueData.readyMessageId          = null;
+    queueData.sessionNoMessageId      = null;
+    queueData.sessionPromptSent       = false;
+    if (sessionNoMessageId) {
+      queueData.pendingDeleteMessageIds = [
+        ...(queueData.pendingDeleteMessageIds ?? []),
+        sessionNoMessageId,
+      ];
+    }
     storage.saveQueue(game, queueData);
 
     await deleteMessageById(interaction.client, channelId, oldReadyMessageId);
 
-    // Refresh the queue embed with the new scheduled time
+    // Refresh the queue embed with the new scheduled time and extension note
     await refreshEmbed(interaction, game, queueData);
     storage.saveQueue(game, queueData);
 
-    // Update the session-no options message to confirm the change, then auto-delete after 10 min
+    // Update the session-no options message to confirm the change (deleted later when ready-up reposts)
     if (sessionNoMessageId && channelId) {
       try {
         const ch  = await interaction.client.channels.fetch(channelId);
         const msg = await ch.messages.fetch(sessionNoMessageId);
-        const confirmMsg = await msg.edit({
+        await msg.edit({
           content: null,
           embeds: [
             new EmbedBuilder()
@@ -1312,7 +1323,6 @@ module.exports = {
           ],
           components: [],
         });
-        setTimeout(() => confirmMsg.delete().catch(() => {}), 10 * 60 * 1000);
       } catch { /* Message gone — fine */ }
     }
 
