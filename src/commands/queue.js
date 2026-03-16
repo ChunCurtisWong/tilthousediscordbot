@@ -9,7 +9,7 @@ const storage = require('../utils/storage');
 const {
   buildQueueEmbed, buildQueueComponents, buildReadyUpRow,
   buildReadyStatusEmbed, buildSessionPromptRow, buildSessionNoOptionsRow,
-  buildSessionSummaryEmbed, buildSessionFillRow,
+  buildSessionSummaryEmbed, buildSessionJoinRow,
   buildClosedQueueEmbed, buildClosedQueueComponents,
 } = require('../utils/embeds');
 const { payoutQueue }  = require('../utils/trinkets');
@@ -1136,10 +1136,11 @@ module.exports = {
     queueData.sessionPaidPlayers = queueData.players.map(p => ({
       userId: p.userId, amount: playerAmountMap.get(p.userId) ?? 0,
     }));
-    queueData.sessionPaidFill  = filteredFill.map(p => ({
+    queueData.sessionPaidFill    = filteredFill.map(p => ({
       userId: p.userId, amount: fillAmountMap.get(p.userId) ?? 0,
     }));
-    queueData.fillAfterSession = [];
+    queueData.fillAfterSession    = [];
+    queueData.playersAfterSession = [];
     storage.saveQueue(game, queueData);
 
     // Delete ready-up message before session summary appears
@@ -1149,7 +1150,7 @@ module.exports = {
     await interaction.update({
       content: null,
       embeds:  [buildSessionSummaryEmbed(game, queueData)],
-      components: [buildSessionFillRow(game)],
+      components: [buildSessionJoinRow(game, queueData)],
     });
 
     // Delete original queue embed
@@ -1371,6 +1372,48 @@ module.exports = {
     logger.info('Queue closed by host (no session)', { game, userId });
   },
 
+  // ── Session join button (adds to Playing, no Trinkets) ──────────
+  async handleSessionJoin(interaction, game) {
+    await interaction.deferUpdate();
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
+
+    if (!queueData?.sessionStarted) {
+      return interaction.followUp({ content: '❌ This session is no longer active.', flags: 64 });
+    }
+
+    const alreadyIn = [
+      ...(queueData.sessionPaidPlayers  ?? []),
+      ...(queueData.playersAfterSession ?? []),
+      ...(queueData.sessionPaidFill     ?? []),
+      ...(queueData.fillAfterSession    ?? []),
+    ].some(p => p.userId === userId);
+
+    if (alreadyIn) {
+      return interaction.followUp({ content: `❌ You are already in the **${game}** session.`, flags: 64 });
+    }
+
+    // Guard against race: two players clicking simultaneously when only one spot remains
+    const { max } = queueData;
+    const totalPlaying = (queueData.sessionPaidPlayers?.length ?? 0) + (queueData.playersAfterSession?.length ?? 0);
+    if (max !== null && max !== undefined && totalPlaying >= max) {
+      return interaction.followUp({ content: `❌ The **${game}** session is full — you can still join as fill!`, flags: 64 });
+    }
+
+    queueData.playersAfterSession = queueData.playersAfterSession ?? [];
+    queueData.playersAfterSession.push({ userId, username });
+    storage.saveQueue(game, queueData);
+
+    await interaction.editReply({
+      content: null,
+      embeds:  [buildSessionSummaryEmbed(game, queueData)],
+      components: [buildSessionJoinRow(game, queueData)],
+    });
+
+    logger.info('Player joined session (main)', { userId, game });
+  },
+
   // ── Session fill button ─────────────────────────────────────────
   async handleSessionFill(interaction, game) {
     await interaction.deferUpdate();
@@ -1383,9 +1426,10 @@ module.exports = {
     }
 
     const alreadyIn = [
-      ...(queueData.sessionPaidPlayers ?? []),
-      ...(queueData.sessionPaidFill    ?? []),
-      ...(queueData.fillAfterSession   ?? []),
+      ...(queueData.sessionPaidPlayers  ?? []),
+      ...(queueData.playersAfterSession ?? []),
+      ...(queueData.sessionPaidFill     ?? []),
+      ...(queueData.fillAfterSession    ?? []),
     ].some(p => p.userId === userId);
 
     if (alreadyIn) {
@@ -1399,7 +1443,7 @@ module.exports = {
     await interaction.editReply({
       content: null,
       embeds:  [buildSessionSummaryEmbed(game, queueData)],
-      components: [buildSessionFillRow(game)],
+      components: [buildSessionJoinRow(game, queueData)],
     });
 
     logger.info('Player joined session fill', { userId, game });

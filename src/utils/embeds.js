@@ -219,14 +219,20 @@ function buildReadyStatusEmbed(game, queueData) {
 function buildSessionSummaryEmbed(game, queueData) {
   const {
     sessionPaidPlayers = [],
+    playersAfterSession = [],
     sessionPaidFill = [],
     fillAfterSession = [],
     sessionStartedAt,
   } = queueData;
 
-  const playerLines = sessionPaidPlayers.map(p =>
-    p.amount > 0 ? `• <@${p.userId}> — **+${p.amount} 🪙**` : `• <@${p.userId}>`
-  );
+  const totalPlaying = sessionPaidPlayers.length + playersAfterSession.length;
+
+  const playerLines = [
+    ...sessionPaidPlayers.map(p =>
+      p.amount > 0 ? `• <@${p.userId}> — **+${p.amount} 🪙**` : `• <@${p.userId}>`
+    ),
+    ...playersAfterSession.map(p => `• <@${p.userId}>`),
+  ];
   const fillLines = [
     ...sessionPaidFill.map(p =>
       p.amount > 0 ? `• <@${p.userId}> — **+${p.amount} 🪙**` : `• <@${p.userId}>`
@@ -234,7 +240,7 @@ function buildSessionSummaryEmbed(game, queueData) {
     ...fillAfterSession.map(p => `• <@${p.userId}>`),
   ];
 
-  let description = `**Playing (${sessionPaidPlayers.length}):**\n`;
+  let description = `**Playing (${totalPlaying}):**\n`;
   description += playerLines.length > 0 ? playerLines.join('\n') : '*None*';
   description += '\n\n**Fill:**\n';
   description += fillLines.length > 0 ? fillLines.join('\n') : '*None*';
@@ -248,16 +254,37 @@ function buildSessionSummaryEmbed(game, queueData) {
 }
 
 /**
- * Returns an ActionRow with a single "Join as Fill" button for post-session joining.
+ * Returns an ActionRow with the appropriate join button(s) for the live session:
+ *  - No max set           → Join Session only
+ *  - Max set, spots open  → Join Session + Join as Fill
+ *  - Max set, queue full  → Join as Fill only
  */
-function buildSessionFillRow(game) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`q:session_fill:${game}`)
-      .setLabel('Join as Fill')
-      .setEmoji('🔄')
-      .setStyle(ButtonStyle.Primary),
-  );
+function buildSessionJoinRow(game, queueData) {
+  const { max, sessionPaidPlayers = [], playersAfterSession = [] } = queueData;
+  const totalPlaying = sessionPaidPlayers.length + playersAfterSession.length;
+  const isFull       = max !== null && max !== undefined && totalPlaying >= max;
+  const hasMax       = max !== null && max !== undefined;
+
+  const joinSessionBtn = new ButtonBuilder()
+    .setCustomId(`q:session_join:${game}`)
+    .setLabel('Join Session')
+    .setEmoji('🎮')
+    .setStyle(ButtonStyle.Success);
+
+  const joinFillBtn = new ButtonBuilder()
+    .setCustomId(`q:session_fill:${game}`)
+    .setLabel('Join as Fill')
+    .setEmoji('🔄')
+    .setStyle(ButtonStyle.Primary);
+
+  if (!hasMax || !isFull) {
+    // No max, or max set but spots still open — show Join Session (+ Fill if max is set)
+    return new ActionRowBuilder().addComponents(
+      ...(hasMax ? [joinSessionBtn, joinFillBtn] : [joinSessionBtn]),
+    );
+  }
+  // Max set and full — only Fill
+  return new ActionRowBuilder().addComponents(joinFillBtn);
 }
 
 /**
@@ -292,7 +319,7 @@ module.exports = {
   buildSessionPromptRow,
   buildSessionNoOptionsRow,
   buildSessionSummaryEmbed,
-  buildSessionFillRow,
+  buildSessionJoinRow,
   buildClosedQueueEmbed,
   buildClosedQueueComponents,
 };
