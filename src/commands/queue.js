@@ -290,7 +290,6 @@ async function maybePromptHost(channel, game, queueData) {
 
 async function sendThresholdNotification(channel, game, queueData, type) {
   const { players, min, max, thresholdHitAt } = queueData;
-  const pingList = players.map(p => `<@${p.userId}>`).join(' ');
   const closeTs  = thresholdHitAt + 1800;
 
   let title, desc, color;
@@ -311,7 +310,6 @@ async function sendThresholdNotification(channel, game, queueData, type) {
   }
 
   await channel.send({
-    content: pingList,
     embeds: [new EmbedBuilder().setColor(color).setTitle(title).setDescription(desc).setTimestamp()],
   });
 }
@@ -388,10 +386,8 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
 
   if (scheduledTime) {
-    // Case A: notify on thresholds — Trinket payout controlled by host, not a timer
     if (max !== null && count >= max) {
       await channel.send({
-        content: `${pingList}\n🔒 The **${game}** queue is full!`,
         embeds: [
           new EmbedBuilder()
             .setColor('#FF6B6B')
@@ -405,9 +401,7 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
         ],
       });
     } else if (min !== null && count === min) {
-      // Ping only at the exact moment min is first reached
       await channel.send({
-        content: `${pingList}\n✅ The **${game}** queue has enough players!`,
         embeds: [
           new EmbedBuilder()
             .setColor('#00FF7F')
@@ -800,7 +794,41 @@ module.exports = {
 
   async handleButtonJoin(interaction, game) {
     await interaction.deferUpdate();
-    return processJoin(interaction, game, interaction.user.id, interaction.user.username, {
+    const queueData = storage.getQueue(game);
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
+
+    if (!queueData.fill) queueData.fill = [];
+
+    const fillIdx = queueData.fill.findIndex(p => p.userId === userId);
+    if (fillIdx !== -1) {
+      // Player is on the fill list — move to main queue if a spot is open
+      const { max } = queueData;
+      if (max !== null && queueData.players.length >= max) return; // full — silent ignore
+      queueData.fill.splice(fillIdx, 1);
+      queueData.players.push({ userId, username, joinedAt: Date.now() });
+      queueData.lastActivityAt = Date.now();
+      storage.saveQueue(game, queueData);
+      await refreshEmbed(interaction, game, queueData);
+
+      // If a ready-up window is active, add the player to the embed with ⏳
+      if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId) {
+        try {
+          const ch       = await interaction.client.channels.fetch(queueData.channelId);
+          const readyMsg = await ch.messages.fetch(queueData.readyMessageId);
+          await readyMsg.edit({
+            embeds:     [buildReadyStatusEmbed(game, queueData)],
+            components: [buildReadyUpRow(game)],
+          });
+        } catch { /* ready message gone — ignore */ }
+      }
+
+      storage.saveQueue(game, queueData);
+      logger.info('Player moved from fill list to main queue', { userId, game });
+      return;
+    }
+
+    return processJoin(interaction, game, userId, username, {
       minOpt: null, maxOpt: null, timeStr: null,
     });
   },
@@ -1018,8 +1046,9 @@ module.exports = {
     const allReady     = readyCount >= totalPlayers;
 
     if (allReady) {
-      const now = Math.floor(Date.now() / 1000);
-      if (!queueData.scheduledTime || queueData.scheduledTime <= now) {
+      const now          = Math.floor(Date.now() / 1000);
+      const effectiveMin = queueData.min ?? 2;
+      if ((!queueData.scheduledTime || queueData.scheduledTime <= now) && totalPlayers >= effectiveMin) {
         queueData.sessionPromptSent = true;
         storage.saveQueue(game, queueData);
         await interaction.editReply({
@@ -1031,9 +1060,15 @@ module.exports = {
         logger.info('All players ready — session prompt sent immediately', { game, readyCount });
         return;
       }
-      logger.info('All players ready — waiting for scheduled time', {
-        game, readyCount, scheduledTime: queueData.scheduledTime,
-      });
+      if (totalPlayers < effectiveMin) {
+        logger.info('All players ready but below effective minimum — waiting for window close', {
+          game, readyCount, effectiveMin,
+        });
+      } else {
+        logger.info('All players ready — waiting for scheduled time', {
+          game, readyCount, scheduledTime: queueData.scheduledTime,
+        });
+      }
     }
 
     storage.saveQueue(game, queueData);
