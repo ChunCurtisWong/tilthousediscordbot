@@ -443,7 +443,6 @@ async function processLeave(interaction, game, userId) {
     }
 
     const inReadyWindow = !!(queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId && queueData.channelId);
-    const effectiveMin  = queueData.min ?? 2;
 
     // Auto-promote fill if available
     let promoted = null;
@@ -458,6 +457,7 @@ async function processLeave(interaction, game, userId) {
 
     if (inReadyWindow) {
       // Update the ready-up message to reflect the new player list (promoted player shows ⏳)
+      // No host prompts mid-window — the window-close logic handles below-min evaluation
       try {
         const readyMsg = await channel.messages.fetch(queueData.readyMessageId);
         const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
@@ -471,21 +471,6 @@ async function processLeave(interaction, game, userId) {
         });
       } catch (err) {
         logger.warn('Failed to update ready-up message after player leave', { game, error: err.message });
-      }
-
-      // If still below min after leave (and any fill promotion), ask host what to do
-      if (queueData.players.length < effectiveMin) {
-        const hostId = queueData.players[0]?.userId;
-        if (hostId) {
-          try {
-            await channel.send({
-              content:    `<@${hostId}> A player left and the **${game}** queue is below minimum. What would you like to do?`,
-              components: [buildSessionNoOptionsRow(game)],
-            });
-          } catch (err) {
-            logger.warn('Failed to send below-min host message after player leave', { game, error: err.message });
-          }
-        }
       }
     } else if (promoted) {
       // Not in ready window — send regular promotion notification
