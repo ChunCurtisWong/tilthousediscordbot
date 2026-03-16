@@ -480,10 +480,11 @@ async function processClear(interaction, game, userId) {
   const isMod     = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
   if (!isHost && !isMod) {
-    return interaction.update({
+    await interaction.editReply({
       content: `❌ You are not the host of the **${game}** queue and do not have moderator permissions.`,
       components: [],
     });
+    return;
   }
 
   await markQueueEmbedClosed(interaction.client, game, queueData);
@@ -491,7 +492,7 @@ async function processClear(interaction, game, userId) {
   storage.deleteQueue(game);
   logger.info('Queue cleared', { userId, game });
 
-  await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+  await interaction.editReply({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
   setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
 }
 
@@ -744,7 +745,8 @@ module.exports = {
     });
   },
 
-  handleClearSelect(interaction) {
+  async handleClearSelect(interaction) {
+    await interaction.deferUpdate();
     return processClear(interaction, interaction.values[0], interaction.user.id);
   },
 
@@ -1171,14 +1173,17 @@ module.exports = {
     // Refresh the queue embed with the new scheduled time and extension note
     if (queueData.messageId && queueData.channelId) {
       try {
-        const ch      = await interaction.client.channels.fetch(queueData.channelId);
+        const ch       = await interaction.client.channels.fetch(queueData.channelId);
         const queueMsg = await ch.messages.fetch(queueData.messageId);
+        const freshData = storage.getQueue(game);
         await queueMsg.edit({
-          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
-          embeds:     [buildQueueEmbed(game, queueData)],
+          content:    freshData.roleId ? `<@&${freshData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, freshData)],
           components: [buildQueueComponents(game)],
         });
-      } catch { /* Queue embed gone — fine */ }
+      } catch (err) {
+        logger.warn('Failed to update queue embed after 30-min extension', { game, error: err.message });
+      }
     }
 
     await interaction.editReply({
@@ -1268,14 +1273,17 @@ module.exports = {
     // Refresh the queue embed with the new scheduled time and extension note
     if (queueData.messageId && channelId) {
       try {
-        const ch      = await interaction.client.channels.fetch(channelId);
+        const ch       = await interaction.client.channels.fetch(channelId);
         const queueMsg = await ch.messages.fetch(queueData.messageId);
+        const freshData = storage.getQueue(game);
         await queueMsg.edit({
-          content:    queueData.roleId ? `<@&${queueData.roleId}>` : null,
-          embeds:     [buildQueueEmbed(game, queueData)],
+          content:    freshData.roleId ? `<@&${freshData.roleId}>` : null,
+          embeds:     [buildQueueEmbed(game, freshData)],
           components: [buildQueueComponents(game)],
         });
-      } catch { /* Queue embed gone — fine */ }
+      } catch (err) {
+        logger.warn('Failed to update queue embed after new-time reschedule', { game, error: err.message });
+      }
     }
 
     // Update the session-no options message to confirm the change (deleted later when ready-up reposts)
@@ -1472,11 +1480,12 @@ module.exports = {
       return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
+    await interaction.deferUpdate();
     await markQueueEmbedClosed(interaction.client, game, queueData);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
 
-    await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+    await interaction.editReply({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
     logger.info('Queue cleared by host via prompt', { game, userId });
   },
 };
