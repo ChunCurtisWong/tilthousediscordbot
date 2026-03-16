@@ -480,10 +480,11 @@ async function processClear(interaction, game, userId) {
   const isMod     = interaction.member.permissions.has(PermissionFlagsBits.ManageChannels);
 
   if (!isHost && !isMod) {
-    return interaction.update({
+    await interaction.editReply({
       content: `❌ You are not the host of the **${game}** queue and do not have moderator permissions.`,
       components: [],
     });
+    return;
   }
 
   await markQueueEmbedClosed(interaction.client, game, queueData);
@@ -491,7 +492,7 @@ async function processClear(interaction, game, userId) {
   storage.deleteQueue(game);
   logger.info('Queue cleared', { userId, game });
 
-  await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+  await interaction.editReply({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
   setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
 }
 
@@ -744,7 +745,8 @@ module.exports = {
     });
   },
 
-  handleClearSelect(interaction) {
+  async handleClearSelect(interaction) {
+    await interaction.deferUpdate();
     return processClear(interaction, interaction.values[0], interaction.user.id);
   },
 
@@ -1472,11 +1474,12 @@ module.exports = {
       return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
+    await interaction.deferUpdate();
     await markQueueEmbedClosed(interaction.client, game, queueData);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
 
-    await interaction.update({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
+    await interaction.editReply({ content: `✅ The **${game}** queue has been cleared.`, components: [] });
     logger.info('Queue cleared by host via prompt', { game, userId });
   },
 };
