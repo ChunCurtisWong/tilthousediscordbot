@@ -810,6 +810,19 @@ module.exports = {
       queueData.lastActivityAt = Date.now();
       storage.saveQueue(game, queueData);
       await refreshEmbed(interaction, game, queueData);
+
+      // If a ready-up window is active, add the player to the embed with ⏳
+      if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId) {
+        try {
+          const ch       = await interaction.client.channels.fetch(queueData.channelId);
+          const readyMsg = await ch.messages.fetch(queueData.readyMessageId);
+          await readyMsg.edit({
+            embeds:     [buildReadyStatusEmbed(game, queueData)],
+            components: [buildReadyUpRow(game)],
+          });
+        } catch { /* ready message gone — ignore */ }
+      }
+
       storage.saveQueue(game, queueData);
       logger.info('Player moved from fill list to main queue', { userId, game });
       return;
@@ -1033,8 +1046,9 @@ module.exports = {
     const allReady     = readyCount >= totalPlayers;
 
     if (allReady) {
-      const now = Math.floor(Date.now() / 1000);
-      if (!queueData.scheduledTime || queueData.scheduledTime <= now) {
+      const now          = Math.floor(Date.now() / 1000);
+      const effectiveMin = queueData.min ?? 2;
+      if ((!queueData.scheduledTime || queueData.scheduledTime <= now) && totalPlayers >= effectiveMin) {
         queueData.sessionPromptSent = true;
         storage.saveQueue(game, queueData);
         await interaction.editReply({
@@ -1046,9 +1060,15 @@ module.exports = {
         logger.info('All players ready — session prompt sent immediately', { game, readyCount });
         return;
       }
-      logger.info('All players ready — waiting for scheduled time', {
-        game, readyCount, scheduledTime: queueData.scheduledTime,
-      });
+      if (totalPlayers < effectiveMin) {
+        logger.info('All players ready but below effective minimum — waiting for window close', {
+          game, readyCount, effectiveMin,
+        });
+      } else {
+        logger.info('All players ready — waiting for scheduled time', {
+          game, readyCount, scheduledTime: queueData.scheduledTime,
+        });
+      }
     }
 
     storage.saveQueue(game, queueData);

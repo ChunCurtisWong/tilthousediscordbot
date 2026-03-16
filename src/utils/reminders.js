@@ -4,7 +4,7 @@ const storage = require('./storage');
 const { payoutQueue } = require('./trinkets');
 const {
   buildClosedQueueEmbed, buildClosedQueueComponents,
-  buildReadyUpRow, buildSessionPromptRow,
+  buildReadyUpRow, buildSessionPromptRow, buildSessionNoOptionsRow,
 } = require('./embeds');
 
 // Case B / C: 30-minute window after threshold/fulfilled before close
@@ -249,12 +249,14 @@ async function runQueueCheck(client, isStartup = false) {
       const allReady =
         (queueData.readyPlayers ?? []).length >= (queueData.players ?? []).length &&
         (queueData.players ?? []).length > 0;
+      const effectiveMinAllReady = queueData.min ?? 2;
       if (
         !isStartup &&
         !queueData.sessionPromptSent &&
         queueData.readyWindowEnd &&
         allReady &&
-        scheduledTime <= now
+        scheduledTime <= now &&
+        (queueData.players ?? []).length >= effectiveMinAllReady
       ) {
         queueData.sessionPromptSent = true;
         storage.saveQueue(game, queueData);
@@ -292,26 +294,60 @@ async function runQueueCheck(client, isStartup = false) {
         const promoted     = queueData.fill.splice(0, promoteCount);
         queueData.players.push(...promoted);
 
+        // Auto-promote additional fill players if still below effective minimum
+        const effectiveMin       = queueData.min ?? 2;
+        const additionalPromoted = [];
+        while (queueData.players.length < effectiveMin && queueData.fill.length > 0) {
+          const p = queueData.fill.shift();
+          queueData.players.push(p);
+          additionalPromoted.push(p);
+        }
+
+        const allPromoted = [...promoted, ...additionalPromoted];
         storage.saveQueue(game, queueData);
 
         if (channelId) {
           try {
             const ch = await client.channels.fetch(channelId);
 
-            // Notify promoted fill players
-            for (const p of promoted) {
+            // Notify all promoted fill players
+            for (const p of allPromoted) {
               await ch.send({
                 content: `<@${p.userId}> You've been promoted from the fill list to the **${game}** main queue! 🎮`,
               });
             }
 
-            await sendSessionPrompt(ch, game, queueData);
-            logger.info('Ready window expired — session prompt sent', {
-              game,
-              notReady:  notReady.length,
-              promoted:  promoted.length,
-              remaining: queueData.players.length,
-            });
+            if (queueData.players.length >= effectiveMin) {
+              await sendSessionPrompt(ch, game, queueData);
+              logger.info('Ready window expired — session prompt sent', {
+                game,
+                notReady:   notReady.length,
+                promoted:   allPromoted.length,
+                remaining:  queueData.players.length,
+              });
+            } else {
+              // Not enough players even after all fill promotions — ask host what to do
+              const host = queueData.players?.[0];
+              if (host) {
+                await ch.send({
+                  content: `<@${host.userId}>`,
+                  embeds: [
+                    new EmbedBuilder()
+                      .setColor('#FF6B6B')
+                      .setTitle(`❌ ${game} — Not Enough Players`)
+                      .setDescription('Not enough players to start. What would you like to do?')
+                      .setTimestamp(),
+                  ],
+                  components: [buildSessionNoOptionsRow(game)],
+                });
+              }
+              logger.info('Ready window expired — not enough players, host prompted', {
+                game,
+                notReady:  notReady.length,
+                remaining: queueData.players.length,
+                effectiveMin,
+              });
+            }
           } catch (err) {
             logger.error('Failed to process ready window expiry', { game, error: err.message });
           }
