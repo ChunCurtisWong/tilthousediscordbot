@@ -119,6 +119,11 @@ function buildQueueComponents(game) {
       .setLabel('Edit Queue')
       .setEmoji('✏️')
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`q:start_now:${game}`)
+      .setLabel('Start Now')
+      .setEmoji('▶️')
+      .setStyle(ButtonStyle.Success),
   );
 }
 

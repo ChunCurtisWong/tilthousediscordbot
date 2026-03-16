@@ -123,6 +123,10 @@ module.exports = {
             const game = customId.slice('q:session_fill:'.length);
             logger.info('Button: session fill', { game, userId: interaction.user.id });
             await queueCmd.handleSessionFill(interaction, game);
+          } else if (customId.startsWith('q:start_now:')) {
+            const game = customId.slice('q:start_now:'.length);
+            logger.info('Button: start now', { game, userId: interaction.user.id });
+            await queueCmd.handleStartNow(interaction, game);
           } else if (customId.startsWith('q:sno_extend:')) {
             const game = customId.slice('q:sno_extend:'.length);
             logger.info('Button: session no extend', { game, userId: interaction.user.id });
