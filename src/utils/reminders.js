@@ -210,7 +210,20 @@ async function runQueueCheck(client, isStartup = false) {
 
         if (channelId) {
           try {
-            const ch       = await client.channels.fetch(channelId);
+            const ch = await client.channels.fetch(channelId);
+
+            // Delete any stale messages from a previous extension cycle before posting
+            for (const msgId of queueData.pendingDeleteMessageIds ?? []) {
+              try {
+                const old = await ch.messages.fetch(msgId);
+                await old.delete();
+              } catch { /* Already gone — fine */ }
+            }
+            if ((queueData.pendingDeleteMessageIds ?? []).length > 0) {
+              queueData.pendingDeleteMessageIds = [];
+              storage.saveQueue(game, queueData);
+            }
+
             const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
             const minLeft  = Math.ceil(timeUntil / 60);
             const sentMsg  = await ch.send({

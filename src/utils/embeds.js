@@ -86,6 +86,14 @@ function buildQueueEmbed(game, queueData) {
     });
   }
 
+  if (queueData.extendedTo) {
+    embed.addFields({
+      name: '⏰ Extended',
+      value: `Rescheduled to <t:${queueData.extendedTo}:t>`,
+      inline: false,
+    });
+  }
+
   embed.setFooter({ text: `Queue: ${game}` }).setTimestamp();
 
   return embed;
