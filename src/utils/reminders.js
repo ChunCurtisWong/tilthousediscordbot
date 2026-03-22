@@ -316,6 +316,48 @@ async function runQueueCheck(client, isStartup = false) {
         }
       }
 
+      // ── Below-min prompt at scheduled time ───────────────────────
+      const effectiveMinBelowMin = queueData.min ?? 2;
+      if (
+        !isStartup &&
+        !queueData.belowMinPromptSent &&
+        !queueData.sessionPromptSent &&
+        scheduledTime <= now &&
+        !queueData.readyMessageId &&
+        (queueData.players ?? []).length > 0 &&
+        (queueData.players ?? []).length < effectiveMinBelowMin
+      ) {
+        queueData.belowMinPromptSent = true;
+        queueData.sessionPromptSent  = true;
+        storage.saveQueue(game, queueData);
+        if (channelId) {
+          try {
+            const ch   = await client.channels.fetch(channelId);
+            const host = queueData.players?.[0];
+            if (host) {
+              await ch.send({
+                content: `<@${host.userId}>`,
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor('#FF6B6B')
+                    .setTitle(`⏰ ${game} — Start Time Passed`)
+                    .setDescription(
+                      'The start time has passed and there aren\'t enough players. What would you like to do?'
+                    )
+                    .setTimestamp(),
+                ],
+                components: [buildSessionNoOptionsRow(game)],
+              });
+            }
+            logger.info('Below-min prompt sent at scheduled time', {
+              game, players: (queueData.players ?? []).length, effectiveMinBelowMin,
+            });
+          } catch (err) {
+            logger.error('Failed to send below-min prompt at scheduled time', { game, error: err.message });
+          }
+        }
+      }
+
       // ── Ready-up window expiry ────────────────────────────────────
       const readyWindowEnd = queueData.readyWindowEnd;
       if (

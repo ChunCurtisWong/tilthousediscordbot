@@ -1269,6 +1269,7 @@ module.exports = {
     queueData.readyPlayers           = [];
     queueData.readyMessageId         = null;
     queueData.sessionPromptSent      = false;
+    queueData.belowMinPromptSent     = false;
     queueData.pendingDeleteMessageIds = [
       ...(queueData.pendingDeleteMessageIds ?? []),
       interaction.message.id,
@@ -1368,6 +1369,7 @@ module.exports = {
     queueData.readyMessageId          = null;
     queueData.sessionNoMessageId      = null;
     queueData.sessionPromptSent       = false;
+    queueData.belowMinPromptSent      = false;
     if (sessionNoMessageId) {
       queueData.pendingDeleteMessageIds = [
         ...(queueData.pendingDeleteMessageIds ?? []),
