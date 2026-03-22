@@ -17,6 +17,17 @@ const HOST_PROMPT_EXPIRY = 300; // seconds
 // Fallback inactivity timeout for no-time queues (3 hours)
 const INACTIVITY_TIMEOUT = 10_800; // seconds
 
+// ─── Delete a single message by ID ────────────────────────────────────────────
+
+async function deleteMessage(client, channelId, messageId) {
+  if (!channelId || !messageId) return;
+  try {
+    const ch  = await client.channels.fetch(channelId);
+    const msg = await ch.messages.fetch(messageId);
+    await msg.delete();
+  } catch { /* Already gone — fine */ }
+}
+
 // ─── Update the live queue embed ──────────────────────────────────────────────
 
 async function updateQueueEmbed(client, game, queueData) {
@@ -127,8 +138,8 @@ async function sendSessionPrompt(channel, game, queueData) {
 
 // ─── Close a queue with optional payout ──────────────────────────────────────
 
-async function closeQueue(client, game, queueData, { withPayout = false, reason = 'default' } = {}) {
-  logger.info('Closing queue', { game, withPayout, reason });
+async function closeQueue(client, game, queueData, { withPayout = false, reason = 'default', silent = false } = {}) {
+  logger.info('Closing queue', { game, withPayout, reason, silent });
 
   await markQueueEmbedClosed(client, game, queueData);
 
@@ -142,6 +153,9 @@ async function closeQueue(client, game, queueData, { withPayout = false, reason 
   }
 
   storage.deleteQueue(game);
+
+  // Silent close — no notification (used for host no-response auto-close)
+  if (silent) return;
 
   // No notification for queues with fewer than 2 players
   if ((queueData.players?.length ?? 0) < 2) return;
@@ -225,6 +239,14 @@ async function runQueueCheck(client, isStartup = false) {
     // ── CASE A: Scheduled time set ───────────────────────────────────
     if (scheduledTime) {
       const timeUntil = scheduledTime - now;
+
+      // ── Host no-response auto-close (10-min timeout on below-min / not-ready prompts) ──
+      if (!isStartup && queueData.hostNoResponseExpiry && queueData.hostNoResponseExpiry <= now) {
+        logger.info('Host no-response timeout — closing queue silently', { game });
+        await deleteMessage(client, channelId, queueData.hostNoResponseMessageId);
+        await closeQueue(client, game, queueData, { withPayout: false, silent: true });
+        continue;
+      }
 
       // ── 10-minute reminder — opens the ready-up window ───────────
       if (!isStartup && !queueData.reminderSent && timeUntil <= 600 && timeUntil > 0) {
@@ -335,7 +357,7 @@ async function runQueueCheck(client, isStartup = false) {
             const ch   = await client.channels.fetch(channelId);
             const host = queueData.players?.[0];
             if (host) {
-              await ch.send({
+              const sentMsg = await ch.send({
                 content: `<@${host.userId}>`,
                 embeds: [
                   new EmbedBuilder()
@@ -348,6 +370,9 @@ async function runQueueCheck(client, isStartup = false) {
                 ],
                 components: [buildSessionNoOptionsRow(game)],
               });
+              queueData.hostNoResponseExpiry    = now + 600;
+              queueData.hostNoResponseMessageId = sentMsg.id;
+              storage.saveQueue(game, queueData);
             }
             logger.info('Below-min prompt sent at scheduled time', {
               game, players: (queueData.players ?? []).length, effectiveMinBelowMin,
@@ -379,7 +404,7 @@ async function runQueueCheck(client, isStartup = false) {
               storage.saveQueue(game, queueData);
               const host = queueData.players?.[0];
               if (host) {
-                await ch.send({
+                const sentMsg = await ch.send({
                   content: `<@${host.userId}>`,
                   embeds: [
                     new EmbedBuilder()
@@ -390,6 +415,9 @@ async function runQueueCheck(client, isStartup = false) {
                   ],
                   components: [buildSessionNoOptionsRow(game)],
                 });
+                queueData.hostNoResponseExpiry    = now + 600;
+                queueData.hostNoResponseMessageId = sentMsg.id;
+                storage.saveQueue(game, queueData);
               }
               logger.info('Ready window expired — min never met, host prompted', {
                 game, players: (queueData.players ?? []).length,
@@ -457,7 +485,7 @@ async function runQueueCheck(client, isStartup = false) {
                 storage.saveQueue(game, queueData);
                 const host = queueData.players?.[0];
                 if (host) {
-                  await ch.send({
+                  const sentMsg = await ch.send({
                     content: `<@${host.userId}>`,
                     embeds: [
                       new EmbedBuilder()
@@ -468,6 +496,9 @@ async function runQueueCheck(client, isStartup = false) {
                     ],
                     components: [buildSessionNoOptionsRow(game)],
                   });
+                  queueData.hostNoResponseExpiry    = now + 600;
+                  queueData.hostNoResponseMessageId = sentMsg.id;
+                  storage.saveQueue(game, queueData);
                 }
                 logger.info('Ready window expired — not all ready, no fill, host prompted', {
                   game, notReady: notReady.length,
