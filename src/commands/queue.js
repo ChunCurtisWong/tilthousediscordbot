@@ -1262,13 +1262,16 @@ module.exports = {
     const newTime          = now + 1800;
     const oldReadyMessageId = queueData.readyMessageId;
 
-    queueData.scheduledTime          = newTime;
-    queueData.extendedTo             = newTime;
-    queueData.reminderSent           = false;
-    queueData.readyWindowEnd         = null;
-    queueData.readyPlayers           = [];
-    queueData.readyMessageId         = null;
-    queueData.sessionPromptSent      = false;
+    queueData.scheduledTime            = newTime;
+    queueData.extendedTo               = newTime;
+    queueData.reminderSent             = false;
+    queueData.readyWindowEnd           = null;
+    queueData.readyPlayers             = [];
+    queueData.readyMessageId           = null;
+    queueData.sessionPromptSent        = false;
+    queueData.belowMinPromptSent       = false;
+    queueData.hostNoResponseExpiry     = null;
+    queueData.hostNoResponseMessageId  = null;
     queueData.pendingDeleteMessageIds = [
       ...(queueData.pendingDeleteMessageIds ?? []),
       interaction.message.id,
@@ -1360,14 +1363,17 @@ module.exports = {
     const sessionNoMessageId = queueData.sessionNoMessageId;
     const channelId          = queueData.channelId;
 
-    queueData.scheduledTime           = ts;
-    queueData.extendedTo              = ts;
-    queueData.reminderSent            = false;
-    queueData.readyWindowEnd          = null;
-    queueData.readyPlayers            = [];
-    queueData.readyMessageId          = null;
-    queueData.sessionNoMessageId      = null;
-    queueData.sessionPromptSent       = false;
+    queueData.scheduledTime            = ts;
+    queueData.extendedTo               = ts;
+    queueData.reminderSent             = false;
+    queueData.readyWindowEnd           = null;
+    queueData.readyPlayers             = [];
+    queueData.readyMessageId           = null;
+    queueData.sessionNoMessageId       = null;
+    queueData.sessionPromptSent        = false;
+    queueData.belowMinPromptSent       = false;
+    queueData.hostNoResponseExpiry     = null;
+    queueData.hostNoResponseMessageId  = null;
     if (sessionNoMessageId) {
       queueData.pendingDeleteMessageIds = [
         ...(queueData.pendingDeleteMessageIds ?? []),
