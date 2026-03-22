@@ -347,19 +347,38 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
   await refreshEmbed(interaction, game, queueData);
   storage.saveQueue(game, queueData);
 
-  // If a ready-up window is already active, update the message content to ping the new player
-  if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId && queueData.channelId) {
-    try {
-      const rch      = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
-      const readyMsg = await rch.messages.fetch(queueData.readyMessageId);
-      const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
-      const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
-      await readyMsg.edit({
-        content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
-        embeds:     [buildReadyStatusEmbed(game, queueData)],
-        components: [buildReadyUpRow(game)],
-      });
-    } catch { /* ready message gone — ignore */ }
+  // If a ready-up window is already active, update the message (or post it for the first time if min just met)
+  if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.channelId) {
+    const effectiveMin = queueData.min ?? 2;
+    if (queueData.readyMessageId) {
+      try {
+        const rch      = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+        const readyMsg = await rch.messages.fetch(queueData.readyMessageId);
+        const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+        const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+        await readyMsg.edit({
+          content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+          embeds:     [buildReadyStatusEmbed(game, queueData)],
+          components: [buildReadyUpRow(game)],
+        });
+      } catch { /* ready message gone — ignore */ }
+    } else if (queueData.players.length >= effectiveMin) {
+      try {
+        const rch     = interaction.channel ?? await interaction.client.channels.fetch(queueData.channelId);
+        const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+        const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+        const sentMsg  = await rch.send({
+          content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+          embeds:     [buildReadyStatusEmbed(game, queueData)],
+          components: [buildReadyUpRow(game)],
+        });
+        queueData.readyMessageId = sentMsg.id;
+        storage.saveQueue(game, queueData);
+        logger.info('Ready-up message posted (min just met during window)', { game });
+      } catch (err) {
+        logger.error('Failed to post delayed ready-up message', { game, error: err.message });
+      }
+    }
   }
 
   const count   = queueData.players.length;
@@ -378,28 +397,31 @@ async function processJoin(interaction, game, userId, username, { minOpt, maxOpt
       queueData.readyWindowEnd = scheduledTime + 600;
       queueData.readyPlayers   = [];
       storage.saveQueue(game, queueData);
-      const minLeft = Math.ceil(timeUntil / 60);
-      try {
-        const sentMsg = await channel.send({
-          content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
-          embeds: [
-            new EmbedBuilder()
-              .setColor('#FFD700')
-              .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
-              .setDescription(
-                `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
-                `Click **Ready Up!** to confirm you'll be there.\n` +
-                `Ready-up window closes <t:${scheduledTime + 600}:R>.`
-              )
-              .setTimestamp(),
-          ],
-          components: [buildReadyUpRow(game)],
-        });
-        queueData.readyMessageId = sentMsg.id;
-        storage.saveQueue(game, queueData);
-        logger.info('Immediate ready-up reminder sent', { game, scheduledTime });
-      } catch (err) {
-        logger.error('Failed to send immediate ready-up reminder', { game, error: err.message });
+      const effectiveMin = queueData.min ?? 2;
+      if (queueData.players.length >= effectiveMin) {
+        const minLeft = Math.ceil(timeUntil / 60);
+        try {
+          const sentMsg = await channel.send({
+            content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
+                .setDescription(
+                  `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
+                  `Click **Ready Up!** to confirm you'll be there.\n` +
+                  `Ready-up window closes <t:${scheduledTime + 600}:R>.`
+                )
+                .setTimestamp(),
+            ],
+            components: [buildReadyUpRow(game)],
+          });
+          queueData.readyMessageId = sentMsg.id;
+          storage.saveQueue(game, queueData);
+          logger.info('Immediate ready-up reminder sent', { game, scheduledTime });
+        } catch (err) {
+          logger.error('Failed to send immediate ready-up reminder', { game, error: err.message });
+        }
       }
     }
     return;
@@ -787,19 +809,38 @@ module.exports = {
       storage.saveQueue(game, queueData);
       await refreshEmbed(interaction, game, queueData);
 
-      // If a ready-up window is active, update both the content ping list and the embed
-      if (queueData.readyWindowEnd && !queueData.sessionPromptSent && queueData.readyMessageId) {
-        try {
-          const ch       = await interaction.client.channels.fetch(queueData.channelId);
-          const readyMsg = await ch.messages.fetch(queueData.readyMessageId);
-          const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
-          const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
-          await readyMsg.edit({
-            content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
-            embeds:     [buildReadyStatusEmbed(game, queueData)],
-            components: [buildReadyUpRow(game)],
-          });
-        } catch { /* ready message gone — ignore */ }
+      // If a ready-up window is active, update the message (or post it for the first time if min just met)
+      if (queueData.readyWindowEnd && !queueData.sessionPromptSent) {
+        const effectiveMin = queueData.min ?? 2;
+        if (queueData.readyMessageId) {
+          try {
+            const ch       = await interaction.client.channels.fetch(queueData.channelId);
+            const readyMsg = await ch.messages.fetch(queueData.readyMessageId);
+            const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+            const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+            await readyMsg.edit({
+              content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+              embeds:     [buildReadyStatusEmbed(game, queueData)],
+              components: [buildReadyUpRow(game)],
+            });
+          } catch { /* ready message gone — ignore */ }
+        } else if (queueData.players.length >= effectiveMin && queueData.channelId) {
+          try {
+            const ch       = await interaction.client.channels.fetch(queueData.channelId);
+            const allPings = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+            const minLeft  = Math.max(1, Math.ceil((queueData.scheduledTime - Math.floor(Date.now() / 1000)) / 60));
+            const sentMsg  = await ch.send({
+              content:    `${allPings}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+              embeds:     [buildReadyStatusEmbed(game, queueData)],
+              components: [buildReadyUpRow(game)],
+            });
+            queueData.readyMessageId = sentMsg.id;
+            storage.saveQueue(game, queueData);
+            logger.info('Ready-up message posted (min just met during window, fill→main)', { game });
+          } catch (err) {
+            logger.error('Failed to post delayed ready-up message', { game, error: err.message });
+          }
+        }
       }
 
       storage.saveQueue(game, queueData);

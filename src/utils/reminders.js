@@ -5,6 +5,7 @@ const { payoutQueue } = require('./trinkets');
 const {
   buildClosedQueueEmbed, buildClosedQueueComponents,
   buildReadyUpRow, buildSessionPromptRow, buildSessionNoOptionsRow,
+  buildQueueEmbed, buildQueueComponents, buildReadyStatusEmbed,
 } = require('./embeds');
 
 // Case B / C: 30-minute window after threshold/fulfilled before close
@@ -15,6 +16,20 @@ const HOST_PROMPT_EXPIRY = 300; // seconds
 
 // Fallback inactivity timeout for no-time queues (3 hours)
 const INACTIVITY_TIMEOUT = 10_800; // seconds
+
+// ─── Update the live queue embed ──────────────────────────────────────────────
+
+async function updateQueueEmbed(client, game, queueData) {
+  if (!queueData.messageId || !queueData.channelId) return;
+  try {
+    const ch  = await client.channels.fetch(queueData.channelId);
+    const msg = await ch.messages.fetch(queueData.messageId);
+    await msg.edit({
+      embeds:     [buildQueueEmbed(game, queueData)],
+      components: [buildQueueComponents(game)],
+    });
+  } catch { /* Message gone or inaccessible */ }
+}
 
 // ─── Mark the original queue embed as closed ──────────────────────────────────
 
@@ -234,26 +249,33 @@ async function runQueueCheck(client, isStartup = false) {
               storage.saveQueue(game, queueData);
             }
 
-            const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
-            const minLeft  = Math.ceil(timeUntil / 60);
-            const sentMsg  = await ch.send({
-              content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
-              embeds: [
-                new EmbedBuilder()
-                  .setColor('#FFD700')
-                  .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
-                  .setDescription(
-                    `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
-                    `Click **Ready Up!** to confirm you'll be there.\n` +
-                    `Ready-up window closes <t:${scheduledTime + 600}:R>.`
-                  )
-                  .setTimestamp(),
-              ],
-              components: [buildReadyUpRow(game)],
-            });
-            queueData.readyMessageId = sentMsg.id;
-            storage.saveQueue(game, queueData);
-            logger.info('Reminder sent with ready-up button', { game, scheduledTime });
+            const effectiveMinReminder = queueData.min ?? 2;
+            if ((queueData.players ?? []).length >= effectiveMinReminder) {
+              const pingList = (queueData.players ?? []).map(p => `<@${p.userId}>`).join(' ');
+              const minLeft  = Math.ceil(timeUntil / 60);
+              const sentMsg  = await ch.send({
+                content: `${pingList}\n⏰ **${game}** starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}! Ready up below.`,
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor('#FFD700')
+                    .setTitle(`⏰ ${game} — Starts in ${minLeft} minute${minLeft !== 1 ? 's' : ''}!`)
+                    .setDescription(
+                      `**Session Time:** <t:${scheduledTime}:F>\nStarts <t:${scheduledTime}:R>.\n\n` +
+                      `Click **Ready Up!** to confirm you'll be there.\n` +
+                      `Ready-up window closes <t:${scheduledTime + 600}:R>.`
+                    )
+                    .setTimestamp(),
+                ],
+                components: [buildReadyUpRow(game)],
+              });
+              queueData.readyMessageId = sentMsg.id;
+              storage.saveQueue(game, queueData);
+              logger.info('Reminder sent with ready-up button', { game, scheduledTime });
+            } else {
+              logger.info('Ready-up window opened — waiting for min players before posting', {
+                game, players: (queueData.players ?? []).length, effectiveMinReminder,
+              });
+            }
           } catch (err) {
             logger.error('Failed to send reminder', { game, error: err.message });
           }
@@ -302,54 +324,17 @@ async function runQueueCheck(client, isStartup = false) {
         readyWindowEnd <= now &&
         !queueData.sessionPromptSent
       ) {
-        queueData.sessionPromptSent = true;
-
-        const readySet         = new Set(queueData.readyPlayers ?? []);
-        const notReady         = (queueData.players ?? []).filter(p => !readySet.has(p.userId));
-        queueData.players      = (queueData.players ?? []).filter(p => readySet.has(p.userId));
-
-        // Move non-ready players to the end of the fill list
-        const originalFillCount = (queueData.fill ?? []).length;
-        queueData.fill          = (queueData.fill ?? []).concat(notReady);
-
-        // Promote original fill players (not the just-demoted ones) to fill vacated spots
-        const promoteCount = Math.min(notReady.length, originalFillCount);
-        const promoted     = queueData.fill.splice(0, promoteCount);
-        queueData.players.push(...promoted);
-
-        // Auto-promote additional fill players if still below effective minimum
-        const effectiveMin       = queueData.min ?? 2;
-        const additionalPromoted = [];
-        while (queueData.players.length < effectiveMin && queueData.fill.length > 0) {
-          const p = queueData.fill.shift();
-          queueData.players.push(p);
-          additionalPromoted.push(p);
-        }
-
-        const allPromoted = [...promoted, ...additionalPromoted];
-        storage.saveQueue(game, queueData);
-
-        if (channelId) {
+        if (!channelId) {
+          queueData.sessionPromptSent = true;
+          storage.saveQueue(game, queueData);
+        } else {
           try {
             const ch = await client.channels.fetch(channelId);
 
-            // Notify all promoted fill players
-            for (const p of allPromoted) {
-              await ch.send({
-                content: `<@${p.userId}> You've been promoted from the fill list to the **${game}** main queue! 🎮`,
-              });
-            }
-
-            if (queueData.players.length >= effectiveMin) {
-              await sendSessionPrompt(ch, game, queueData);
-              logger.info('Ready window expired — session prompt sent', {
-                game,
-                notReady:   notReady.length,
-                promoted:   allPromoted.length,
-                remaining:  queueData.players.length,
-              });
-            } else {
-              // Not enough players even after all fill promotions — ask host what to do
+            // Case 1: min was never met — ready-up message was never posted
+            if (!queueData.readyMessageId) {
+              queueData.sessionPromptSent = true;
+              storage.saveQueue(game, queueData);
               const host = queueData.players?.[0];
               if (host) {
                 await ch.send({
@@ -364,12 +349,88 @@ async function runQueueCheck(client, isStartup = false) {
                   components: [buildSessionNoOptionsRow(game)],
                 });
               }
-              logger.info('Ready window expired — not enough players, host prompted', {
-                game,
-                notReady:  notReady.length,
-                remaining: queueData.players.length,
-                effectiveMin,
+              logger.info('Ready window expired — min never met, host prompted', {
+                game, players: (queueData.players ?? []).length,
               });
+            } else {
+              const readySet = new Set(queueData.readyPlayers ?? []);
+              const notReady = (queueData.players ?? []).filter(p => !readySet.has(p.userId));
+
+              // Case 2: all ready — session prompt
+              if (notReady.length === 0) {
+                queueData.sessionPromptSent = true;
+                storage.saveQueue(game, queueData);
+                await sendSessionPrompt(ch, game, queueData);
+                logger.info('Ready window expired — all ready, session prompt sent', { game });
+
+              // Case 3: not all ready, fill available — promote and reset window
+              } else if ((queueData.fill ?? []).length > 0) {
+                const readyPlayers  = (queueData.players ?? []).filter(p => readySet.has(p.userId));
+                const toPromote     = Math.min(notReady.length, queueData.fill.length);
+                const newlyPromoted = queueData.fill.splice(0, toPromote);
+                queueData.players   = [...readyPlayers, ...newlyPromoted];
+
+                // Reset ready-up window (sessionPromptSent stays false)
+                queueData.readyWindowEnd = now + 600;
+                queueData.readyPlayers   = [];
+                const oldReadyMessageId  = queueData.readyMessageId;
+                queueData.readyMessageId = null;
+                storage.saveQueue(game, queueData);
+
+                // Delete old ready-up message
+                if (oldReadyMessageId) {
+                  try {
+                    const oldMsg = await ch.messages.fetch(oldReadyMessageId);
+                    await oldMsg.delete();
+                  } catch { /* Already gone */ }
+                }
+
+                // Refresh queue embed
+                await updateQueueEmbed(client, game, storage.getQueue(game));
+
+                // Post new ready-up message
+                const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
+                const sentMsg  = await ch.send({
+                  content:    `${pingList}\n⏰ **${game}** is ready to start! Ready up below.`,
+                  embeds:     [buildReadyStatusEmbed(game, queueData)],
+                  components: [buildReadyUpRow(game)],
+                });
+                queueData.readyMessageId = sentMsg.id;
+                storage.saveQueue(game, queueData);
+
+                // Notify promoted players
+                for (const p of newlyPromoted) {
+                  await ch.send({
+                    content: `<@${p.userId}> You've been promoted from the fill list to the **${game}** main queue! 🎮`,
+                  });
+                }
+
+                logger.info('Ready window expired — fill promoted, window reset', {
+                  game, promoted: toPromote, notReady: notReady.length,
+                });
+
+              // Case 4: not all ready, no fill — ask host
+              } else {
+                queueData.sessionPromptSent = true;
+                storage.saveQueue(game, queueData);
+                const host = queueData.players?.[0];
+                if (host) {
+                  await ch.send({
+                    content: `<@${host.userId}>`,
+                    embeds: [
+                      new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle(`⚠️ ${game} — Not All Players Are Ready`)
+                        .setDescription('Not all players are ready. What would you like to do?')
+                        .setTimestamp(),
+                    ],
+                    components: [buildSessionNoOptionsRow(game)],
+                  });
+                }
+                logger.info('Ready window expired — not all ready, no fill, host prompted', {
+                  game, notReady: notReady.length,
+                });
+              }
             }
           } catch (err) {
             logger.error('Failed to process ready window expiry', { game, error: err.message });
