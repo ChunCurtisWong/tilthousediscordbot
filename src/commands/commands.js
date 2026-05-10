@@ -37,6 +37,7 @@ const PUBLIC_FIELDS = [
     value: [
       '`/th-roll` — Roll a dice (default 6 sides, up to 1000)',
       '`/th-coinflip` — Flip a coin, optional bet amount and choice',
+      '`/th-slots amount` — Spin the slot machine, bet 10–500 Trinkets',
     ].join('\n'),
   },
   {

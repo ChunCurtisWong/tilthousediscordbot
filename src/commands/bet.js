@@ -139,10 +139,12 @@ module.exports = {
       return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', flags: 64 });
     }
     if (amount > challengerBal) {
-      return interaction.reply({
-        content: `❌ You only have **${challengerBal} 🪙** — you can't bet **${amount} 🪙**.`,
+      await interaction.reply({
+        content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${challengerBal} 🪙**`,
         flags: 64,
       });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     // ── Store pending bet and post challenge ──────────────────────────
@@ -226,10 +228,12 @@ module.exports = {
       });
     }
     if (targetBal < betData.amount) {
-      return interaction.followUp({
-        content: `❌ You need at least **${betData.amount} 🪙** to accept this challenge. You have **${targetBal} 🪙**.`,
+      const msg = await interaction.followUp({
+        content: `❌ You don't have enough Trinkets to accept this challenge.\nYour balance: **${targetBal} 🪙**`,
         flags: 64,
       });
+      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      return;
     }
 
     // ── Resolve the duel ──────────────────────────────────────────────

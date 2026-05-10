@@ -71,10 +71,12 @@ module.exports = {
       return interaction.reply({ content: '❌ Minimum bet is **10 🪙**.', flags: 64 });
     }
     if (bet > balance) {
-      return interaction.reply({
-        content: `❌ You only have **${balance} 🪙** — you can't bet **${bet} 🪙**.`,
+      await interaction.reply({
+        content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
         flags: 64,
       });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     // Determine win/loss: with choice → match wins; without → heads wins

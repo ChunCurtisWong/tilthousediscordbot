@@ -167,10 +167,10 @@ function getLeaderboard(limit = 3) {
 
 const COOLDOWN_MS = 30_000;
 
-function checkCooldown(userId, command) {
+function checkCooldown(userId, command, durationMs = COOLDOWN_MS) {
   const cooldowns = read()._cooldowns ?? {};
   const lastUsed  = cooldowns[command]?.[userId] ?? 0;
-  const remaining = lastUsed + COOLDOWN_MS - Date.now();
+  const remaining = lastUsed + durationMs - Date.now();
   return remaining > 0 ? remaining : null;
 }
 
