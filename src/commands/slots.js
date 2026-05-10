@@ -8,11 +8,11 @@ const MAX_BET = 500;
 
 const SYMBOLS = [
   { emoji: '🍒', name: 'Cherry',  weight: 40, payout:  2 },
-  { emoji: '🍋', name: 'Lemon',   weight: 25, payout:  4 },
-  { emoji: '🍊', name: 'Orange',  weight: 15, payout:  6 },
-  { emoji: '🍇', name: 'Grape',   weight: 10, payout:  8 },
-  { emoji: '⭐', name: 'Star',    weight:  6, payout: 15 },
-  { emoji: '💎', name: 'Diamond', weight:  3, payout: 35 },
+  { emoji: '🍋', name: 'Lemon',   weight: 25, payout:  3 },
+  { emoji: '🍊', name: 'Orange',  weight: 15, payout:  4 },
+  { emoji: '🍇', name: 'Grape',   weight: 10, payout:  5 },
+  { emoji: '⭐', name: 'Star',    weight:  6, payout: 10 },
+  { emoji: '💎', name: 'Diamond', weight:  3, payout: 25 },
   { emoji: '7️⃣', name: 'Seven',   weight:  1, payout: 50 },
 ];
 
@@ -98,7 +98,7 @@ module.exports = {
     if (result.type === 'three') {
       netChange = result.symbol.payout * bet;
     } else if (result.type === 'two') {
-      netChange = -Math.round(bet * 0.1);
+      netChange = -Math.floor(bet / 2);
     } else {
       netChange = -bet;
     }
@@ -131,10 +131,10 @@ module.exports = {
             : '🎉 Winner!';
       outcomeText = `Three ${result.symbol.name}s! **+${payout} 🪙**`;
     } else if (result.type === 'two') {
-      const returned = bet - Math.round(bet * 0.1);
+      const returned = bet - Math.floor(bet / 2);
       color = '#5865F2';
       title = '🔵 Almost!';
-      outcomeText = `Two ${result.symbol.name}s! **+${returned} 🪙 returned**`;
+      outcomeText = `Two ${result.symbol.name}s! **+${returned} 🪙 returned** (half your bet back)`;
     } else {
       color = '#FF4444';
       title = '💀 No Match';
