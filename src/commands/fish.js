@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const FISH_COOLDOWN_MS = 60_000;
+const FISH_COOLDOWN_MS = 10_000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ─── Data tables ──────────────────────────────────────────────────────────────

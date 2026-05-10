@@ -39,7 +39,7 @@ const PUBLIC_FIELDS = [
       '`/th-coinflip` — Flip a coin, optional bet amount and choice',
       '`/th-slots amount` — Spin the slot machine, bet 10–500 Trinkets',
       '`/th-blackjack amount` — Play blackjack, bet 10–500 Trinkets',
-      '`/th-fish cast` — Go fishing and earn Trinkets (60s cooldown)',
+      '`/th-fish cast` — Go fishing and earn Trinkets (10s cooldown)',
     ].join('\n'),
   },
   {
