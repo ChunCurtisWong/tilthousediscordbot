@@ -110,14 +110,15 @@ function rollWeighted(table) {
 
 // ─── Embed builders ───────────────────────────────────────────────────────────
 
-const WAVE      = '🌊〰️〰️〰️〰️〰️〰️〰️〰️';
-const WAVE_HOOK = '🌊〰️〰️〰️🪝〰️〰️〰️〰️';
+const WAVE      = '🌊≋≋≋≋≋≋≋≋≋≋';
+const ROD_DEEP  = `🎣\n┃\n┃\n┃\n${WAVE}`;
+const ROD_NEAR  = `🎣\n┃\n${WAVE}`;
 
 function phaseEmbed(phase) {
   let desc;
-  if (phase === 1)      desc = `${WAVE}\n🎣 Casting line...`;
-  else if (phase === 2) desc = `${WAVE_HOOK}\n🎣 Line is in the water...`;
-  else                  desc = `${WAVE_HOOK}\n　　　💦💦\n🎣 Something's biting...`;
+  if (phase === 1)      desc = `🎣\n${WAVE}\n🎣 Casting line...`;
+  else if (phase === 2) desc = `${ROD_NEAR}\n🎣 Line is in the water...`;
+  else                  desc = `${ROD_DEEP}\n🪝\n💦\n🎣 Something's biting...`;
   return new EmbedBuilder().setColor('#5865F2').setDescription(desc);
 }
 
@@ -127,8 +128,8 @@ function buildResultEmbed(cast, result) {
       .setColor('#FF4444')
       .setTitle(`${result.item.emoji} Item Lost!`)
       .setDescription(
-        `${WAVE}\n` +
-        `　　　❌\n` +
+        `${ROD_NEAR}\n` +
+        `❌\n` +
         `${result.msg}\n` +
         `Replacement charged: **-${result.item.cost} 🪙**`
       );
@@ -141,8 +142,9 @@ function buildResultEmbed(cast, result) {
       .setColor('#808080')
       .setTitle('🧦 Old Boot!')
       .setDescription(
-        `${WAVE}\n` +
-        `　　　🧦\n` +
+        `${ROD_DEEP}\n` +
+        `🪝\n` +
+        `🧦\n` +
         `Just an old boot...\n` +
         `+0 🪙`
       );
@@ -161,8 +163,9 @@ function buildResultEmbed(cast, result) {
     .setColor(color)
     .setTitle(`${fish.emoji} ${fish.name}!`)
     .setDescription(
-      `${WAVE}\n` +
-      `　　　${fish.emoji}\n` +
+      `${ROD_DEEP}\n` +
+      `🪝\n` +
+      `${fish.emoji}\n` +
       `Cast: **-${cast.cost} 🪙**\n` +
       rewardLine
     );
