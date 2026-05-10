@@ -76,11 +76,10 @@ function buildFinalEmbed(game, result) {
 
   let color, title, outcomeLines;
   if (result === 'blackjack') {
-    const payout = Math.floor(game.bet * 1.2);
     color = '#FFD700'; title = '🃏 Blackjack!';
-    outcomeLines = `Bet: **${game.bet} 🪙**\nWon: **+${payout} 🪙**`;
+    outcomeLines = `Bet: **${game.bet} 🪙**\nWon: **+${game.bet} 🪙**`;
   } else if (result === 'win') {
-    const payout = Math.floor(game.bet * 0.9);
+    const payout = Math.floor(game.bet * 0.5);
     color = '#00CC66'; title = '🎉 You Win!';
     outcomeLines = `Bet: **${game.bet} 🪙**\nWon: **+${payout} 🪙**`;
   } else if (result === 'bust') {
@@ -111,8 +110,8 @@ async function resolveGame(game, result, interaction) {
   activeGames.delete(game.userId);
 
   let netChange = 0;
-  if (result === 'blackjack')               netChange =  Math.floor(game.bet * 1.2);
-  else if (result === 'win')                netChange =  Math.floor(game.bet * 0.9);
+  if (result === 'blackjack')               netChange =  game.bet;
+  else if (result === 'win')                netChange =  Math.floor(game.bet * 0.5);
   else if (result === 'bust' || result === 'lose') netChange = -game.bet;
 
   if (netChange !== 0) await addTrinkets(game.userId, netChange, game.username);
@@ -197,7 +196,7 @@ module.exports = {
 
     // Natural blackjack — resolve immediately (no buttons)
     if (handValue(playerHand) === 21) {
-      const payout = Math.floor(bet * 1.2);
+      const payout = bet;
       await addTrinkets(userId, payout, username);
       await setCooldown(userId, 'blackjack');
       logger.info('Blackjack — natural blackjack', { userId, bet, payout });
