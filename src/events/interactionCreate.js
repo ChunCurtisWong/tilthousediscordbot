@@ -154,6 +154,19 @@ module.exports = {
             await betCmd.handleDecline(interaction, betId);
           }
 
+        // Blackjack buttons
+        } else if (customId.startsWith('bj:')) {
+          const bjCmd = interaction.client.commands.get('th-blackjack');
+          if (customId.startsWith('bj:hit:')) {
+            const playerId = customId.slice('bj:hit:'.length);
+            logger.info('Button: blackjack hit', { playerId, userId: interaction.user.id });
+            await bjCmd.handleHit(interaction, playerId);
+          } else if (customId.startsWith('bj:stand:')) {
+            const playerId = customId.slice('bj:stand:'.length);
+            logger.info('Button: blackjack stand', { playerId, userId: interaction.user.id });
+            await bjCmd.handleStand(interaction, playerId);
+          }
+
         // Restore buttons
         } else if (customId.startsWith('restore:')) {
           const restoreCmd = interaction.client.commands.get('th-restore');

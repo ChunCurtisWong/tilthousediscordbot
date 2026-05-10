@@ -31,7 +31,8 @@ module.exports = {
         '**🎉 Fun**\n' +
         '`/th-coinflip` — Flip a coin, optional bet amount and choice\n' +
         '`/th-roll` — Roll a dice (default 6 sides)\n' +
-        '`/th-slots amount` — Spin the slot machine, bet 10–500 Trinkets\n\n' +
+        '`/th-slots amount` — Spin the slot machine, bet 10–500 Trinkets\n' +
+        '`/th-blackjack amount` — Play blackjack, bet 10–500 Trinkets\n\n' +
         '**🌐 Server**\n' +
         '`/th-roles` — React to assign yourself a game role\n\n' +
         '**🪙 Trinkets**\n' +
