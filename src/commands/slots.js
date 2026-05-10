@@ -72,10 +72,12 @@ module.exports = {
     const remaining = checkCooldown(userId, 'slots', SLOTS_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
-      return interaction.reply({
+      await interaction.reply({
         content: `⏳ Wait **${secs}s** before spinning again.`,
         flags: 64,
       });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     // Balance check
@@ -122,23 +124,23 @@ module.exports = {
     // Phase 4 — final result
     await delay(1000);
 
-    let color, title, outcomeText;
+    let color, title, outcomeLines;
     if (result.type === 'three') {
       const payout = result.symbol.payout * bet;
       color = '#FFD700';
       title = result.symbol.payout >= 50 ? '🎰 JACKPOT!'
             : result.symbol.payout >= 10 ? '🎉 Big Win!'
             : '🎉 Winner!';
-      outcomeText = `Three ${result.symbol.name}s! **+${payout} 🪙**`;
+      outcomeLines = `Three ${result.symbol.name}s!\nBet: **${bet} 🪙**\nWon: **+${payout} 🪙**`;
     } else if (result.type === 'two') {
       const returned = bet - Math.round(bet * 0.1);
       color = '#5865F2';
       title = '🔵 Almost!';
-      outcomeText = `Two ${result.symbol.name}s! **+${returned} 🪙 returned**`;
+      outcomeLines = `Two ${result.symbol.name}s!\nBet: **${bet} 🪙**\nReturned: **${returned} 🪙**`;
     } else {
       color = '#FF4444';
-      title = '💀 No Match';
-      outcomeText = `No match. **-${bet} 🪙**`;
+      title = '💀 No Match!';
+      outcomeLines = `No match!\nBet: **${bet} 🪙**\nLost: **-${bet} 🪙**`;
     }
 
     await interaction.editReply({
@@ -146,9 +148,7 @@ module.exports = {
         new EmbedBuilder()
           .setColor(color)
           .setTitle(title)
-          .setDescription(
-            `[ ${reelStr(reels, 3)} ]\n\n${outcomeText}\nBalance: **${newBalance.toLocaleString()} 🪙**`
-          ),
+          .setDescription(`${reelStr(reels, 3)}\n\n${outcomeLines}`),
       ],
     });
   },
