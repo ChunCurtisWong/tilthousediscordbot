@@ -110,8 +110,15 @@ function rollWeighted(table) {
 
 // ─── Embed builders ───────────────────────────────────────────────────────────
 
-function phaseEmbed(text) {
-  return new EmbedBuilder().setColor('#5865F2').setTitle(text);
+const WAVE      = '🌊〰️〰️〰️〰️〰️〰️〰️〰️';
+const WAVE_HOOK = '🌊〰️〰️〰️🪝〰️〰️〰️〰️';
+
+function phaseEmbed(phase) {
+  let desc;
+  if (phase === 1)      desc = `${WAVE}\n🎣 Casting line...`;
+  else if (phase === 2) desc = `${WAVE_HOOK}\n🎣 Line is in the water...`;
+  else                  desc = `${WAVE_HOOK}\n　　　💦💦\n🎣 Something's biting...`;
+  return new EmbedBuilder().setColor('#5865F2').setDescription(desc);
 }
 
 function buildResultEmbed(cast, result) {
@@ -120,27 +127,42 @@ function buildResultEmbed(cast, result) {
       .setColor('#FF4444')
       .setTitle(`${result.item.emoji} Item Lost!`)
       .setDescription(
-        `${result.msg}\n\n` +
-        `Cast: **-${cast.cost} 🪙**\n` +
+        `${WAVE}\n` +
+        `　　　❌\n` +
+        `${result.msg}\n` +
         `Replacement charged: **-${result.item.cost} 🪙**`
       );
   }
 
   const { fish } = result;
+
+  if (fish.name === 'Old Boot') {
+    return new EmbedBuilder()
+      .setColor('#808080')
+      .setTitle('🧦 Old Boot!')
+      .setDescription(
+        `${WAVE}\n` +
+        `　　　🧦\n` +
+        `Just an old boot...\n` +
+        `+0 🪙`
+      );
+  }
+
   let color;
   if (fish.name === 'Shark' || fish.name === 'Squid') color = '#FFD700';
-  else if (fish.reward > 0)  color = '#00CC66';
-  else if (fish.reward === 0) color = '#808080';
-  else                        color = '#FF4444'; // Skeleton Fish
+  else if (fish.reward > 0) color = '#00CC66';
+  else                      color = '#FF4444'; // Skeleton Fish
 
-  const rewardLine = fish.reward > 0  ? `Catch: **+${fish.reward} 🪙**`
-                   : fish.reward < 0  ? `Catch: **${fish.reward} 🪙**`
-                   :                    `Catch: **+0 🪙**`;
+  const rewardLine = fish.reward > 0
+    ? `Catch: **+${fish.reward} 🪙**`
+    : `Catch: **${fish.reward} 🪙**`;
 
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(`${fish.emoji} ${fish.name}!`)
     .setDescription(
+      `${WAVE}\n` +
+      `　　　${fish.emoji}\n` +
       `Cast: **-${cast.cost} 🪙**\n` +
       rewardLine
     );
@@ -191,7 +213,7 @@ module.exports = {
     }
 
     // Phase 1 — send immediately
-    await interaction.reply({ embeds: [phaseEmbed('🎣 Casting line...')] });
+    await interaction.reply({ embeds: [phaseEmbed(1)] });
 
     // Deduct cast cost and set cooldown right away
     await addTrinkets(userId, -cast.cost, username);
@@ -220,11 +242,11 @@ module.exports = {
 
     // Phase 2
     await delay(1500);
-    await interaction.editReply({ embeds: [phaseEmbed('🎣 Line is in the water...')] });
+    await interaction.editReply({ embeds: [phaseEmbed(2)] });
 
     // Phase 3
     await delay(1500);
-    await interaction.editReply({ embeds: [phaseEmbed('🎣 Something\'s biting...')] });
+    await interaction.editReply({ embeds: [phaseEmbed(3)] });
 
     // Final result
     await delay(1000);
