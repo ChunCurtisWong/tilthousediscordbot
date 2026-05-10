@@ -9,7 +9,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const CASTS = {
   standard: {
-    label: 'Standard Cast',
+    tier: 'Standard',
     cost: 5,
     lossChance: 0.05,
     items: [
@@ -27,8 +27,8 @@ const CASTS = {
       { emoji: '💀', name: 'Skeleton Fish', weight:  5, reward:  -15 },
     ],
   },
-  better: {
-    label: 'Better Cast',
+  enhanced: {
+    tier: 'Enhanced',
     cost: 10,
     lossChance: 0.08,
     items: [
@@ -47,7 +47,7 @@ const CASTS = {
     ],
   },
   premium: {
-    label: 'Premium Cast',
+    tier: 'Premium',
     cost: 50,
     lossChance: 0.12,
     items: [
@@ -114,26 +114,27 @@ const WAVE      = '🌊≋≋≋≋≋≋≋≋≋≋';
 const ROD_DEEP  = `🎣\n┃\n┃\n┃\n${WAVE}`;
 const ROD_NEAR  = `🎣\n┃\n${WAVE}`;
 
-function phaseEmbed(phase, username) {
+function phaseEmbed(phase, username, cast) {
   let desc;
   if (phase === 1)      desc = `🎣\n${WAVE}\n🎣 Casting line...`;
   else if (phase === 2) desc = `${ROD_NEAR}\n🎣 Line is in the water...`;
   else                  desc = `${ROD_DEEP}\n🪝\n💦\n🎣 Something's biting...`;
   return new EmbedBuilder()
     .setColor('#5865F2')
-    .setTitle(`${username}'s Cast`)
+    .setTitle(`${username}'s Cast (${cast.tier})`)
     .setDescription(desc);
 }
 
 function buildResultEmbed(cast, result, username) {
-  const title = `${username}'s Cast`;
+  const title = `${username}'s Cast (${cast.tier})`;
+  const castLine = `Cast: **-${cast.cost} 🪙**`;
 
   if (result.type === 'loss') {
     return new EmbedBuilder()
       .setColor('#FF4444')
       .setTitle(title)
       .setDescription(`${ROD_NEAR}\n❌`)
-      .addFields({ name: result.msg, value: `Replacement charged: **-${result.item.cost} 🪙**` });
+      .addFields({ name: castLine, value: `${result.msg}\nReplacement: **-${result.item.cost} 🪙**` });
   }
 
   const { fish } = result;
@@ -143,21 +144,23 @@ function buildResultEmbed(cast, result, username) {
       .setColor('#808080')
       .setTitle(title)
       .setDescription(`${ROD_DEEP}\n🪝\n🧦`)
-      .addFields({ name: 'Just an old boot...', value: '+0 🪙' });
+      .addFields({ name: castLine, value: 'Just an old boot...\nEarned: **+0 🪙**' });
   }
 
   let color;
   if (fish.name === 'Shark' || fish.name === 'Squid') color = '#FFD700';
   else if (fish.reward > 0) color = '#00CC66';
-  else                      color = '#FF4444'; // Skeleton Fish
+  else                      color = '#FF4444';
 
-  const rewardValue = fish.reward > 0 ? `+${fish.reward} 🪙` : `${fish.reward} 🪙`;
+  const rewardLine = fish.reward > 0
+    ? `You caught a ${fish.name}!\nEarned: **+${fish.reward} 🪙**`
+    : `You caught a ${fish.name}!\nLost: **${fish.reward} 🪙**`;
 
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
     .setDescription(`${ROD_DEEP}\n🪝\n${fish.emoji}`)
-    .addFields({ name: `You caught a ${fish.name}!`, value: rewardValue });
+    .addFields({ name: castLine, value: rewardLine });
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -172,8 +175,8 @@ module.exports = {
         .setDescription('Choose your cast type')
         .setRequired(true)
         .addChoices(
-          { name: 'Standard Cast (-5 Trinkets)',  value: 'standard' },
-          { name: 'Better Cast (-10 Trinkets)',   value: 'better'   },
+          { name: 'Standard Cast (-5 Trinkets)',   value: 'standard' },
+          { name: 'Enhanced Cast (-10 Trinkets)', value: 'enhanced' },
           { name: 'Premium Cast (-50 Trinkets)',  value: 'premium'  }
         )
     ),
@@ -205,7 +208,7 @@ module.exports = {
     }
 
     // Phase 1 — send immediately
-    await interaction.reply({ embeds: [phaseEmbed(1, username)] });
+    await interaction.reply({ embeds: [phaseEmbed(1, username, cast)] });
 
     // Deduct cast cost and set cooldown right away
     await addTrinkets(userId, -cast.cost, username);
@@ -234,11 +237,11 @@ module.exports = {
 
     // Phase 2
     await delay(1500);
-    await interaction.editReply({ embeds: [phaseEmbed(2, username)] });
+    await interaction.editReply({ embeds: [phaseEmbed(2, username, cast)] });
 
     // Phase 3
     await delay(1500);
-    await interaction.editReply({ embeds: [phaseEmbed(3, username)] });
+    await interaction.editReply({ embeds: [phaseEmbed(3, username, cast)] });
 
     // Final result
     await delay(1000);
