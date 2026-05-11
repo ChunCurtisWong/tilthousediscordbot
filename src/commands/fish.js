@@ -10,7 +10,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const CASTS = {
   standard: {
     tier: 'Standard',
-    cost: 5,
+    cost: 20,
     lossChance: 0.05,
     items: [
       { emoji: '🪱', name: 'Bait', cost:  5 },
@@ -29,7 +29,7 @@ const CASTS = {
   },
   enhanced: {
     tier: 'Enhanced',
-    cost: 10,
+    cost: 40,
     lossChance: 0.08,
     items: [
       { emoji: '🪱', name: 'Bait', cost: 10 },
@@ -48,7 +48,7 @@ const CASTS = {
   },
   premium: {
     tier: 'Premium',
-    cost: 50,
+    cost: 65,
     lossChance: 0.12,
     items: [
       { emoji: '🪱', name: 'Bait', cost:  25 },
@@ -175,9 +175,9 @@ module.exports = {
         .setDescription('Choose your cast type')
         .setRequired(true)
         .addChoices(
-          { name: 'Standard Cast (-5 Trinkets)',   value: 'standard' },
-          { name: 'Enhanced Cast (-10 Trinkets)', value: 'enhanced' },
-          { name: 'Premium Cast (-50 Trinkets)',  value: 'premium'  }
+          { name: 'Standard Cast (-20 Trinkets)', value: 'standard' },
+          { name: 'Enhanced Cast (-40 Trinkets)', value: 'enhanced' },
+          { name: 'Premium Cast (-65 Trinkets)',  value: 'premium'  }
         )
     ),
 
