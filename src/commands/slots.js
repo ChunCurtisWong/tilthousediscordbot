@@ -24,10 +24,9 @@ const SYMBOLS = [
 ];
 
 const TOTAL_WEIGHT = SYMBOLS.reduce((s, sym) => s + sym.weight, 0);
-
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// In-memory state for Play Again buttons — cleared on bot restart (intentional)
+// In-memory state — cleared on bot restart (intentional)
 const activeSessions = new Map(); // userId → { bet, timeout, message }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,7 +59,7 @@ function spinningEmbed(reels, revealed, bet) {
     .setDescription(`[ ${reelStr(reels, revealed)} ]\n\nBet: **${bet} 🪙**`);
 }
 
-function resultEmbed(reels, result, bet) {
+function buildResultEmbed(reels, result, bet) {
   let color, title, outcomeLines;
   if (result.type === 'three') {
     const payout = result.symbol.payout * bet;
@@ -95,34 +94,44 @@ function playAgainRow(userId, disabled = false) {
   );
 }
 
-// ─── Shared spin logic (used by both execute and handlePlayAgain) ─────────────
+function setupSession(userId, bet, message) {
+  const prev = activeSessions.get(userId);
+  if (prev) clearTimeout(prev.timeout);
 
-async function runSpin({ userId, username, bet, editReply }) {
+  const timeout = setTimeout(async () => {
+    if (!activeSessions.has(userId)) return;
+    activeSessions.delete(userId);
+    try { await message.edit({ components: [playAgainRow(userId, true)] }); } catch { /* ignore */ }
+  }, PLAY_AGAIN_TIMEOUT_MS);
+
+  activeSessions.set(userId, { bet, timeout, message });
+}
+
+// ─── Shared spin logic ────────────────────────────────────────────────────────
+
+async function runSpin({ userId, username, bet, message }) {
   const reels  = [spinReel(), spinReel(), spinReel()];
   const result = analyzeResult(reels);
 
   let netChange;
-  if (result.type === 'three')     netChange = result.symbol.payout * bet;
-  else if (result.type === 'two')  netChange = -Math.round(bet * 0.1);
-  else                             netChange = -bet;
+  if (result.type === 'three')    netChange = result.symbol.payout * bet;
+  else if (result.type === 'two') netChange = -Math.round(bet * 0.1);
+  else                            netChange = -bet;
 
-  await editReply({ embeds: [spinningEmbed(reels, 0, bet)], components: [] });
+  await message.edit({ embeds: [spinningEmbed(reels, 0, bet)], components: [] });
 
   const newBalance = await addTrinkets(userId, netChange, username);
   await setCooldown(userId, 'slots');
   logger.info('Slots result', { userId, bet, type: result.type, netChange, newBalance });
 
   await delay(1500);
-  await editReply({ embeds: [spinningEmbed(reels, 1, bet)], components: [] });
+  await message.edit({ embeds: [spinningEmbed(reels, 1, bet)], components: [] });
 
   await delay(1000);
-  await editReply({ embeds: [spinningEmbed(reels, 2, bet)], components: [] });
+  await message.edit({ embeds: [spinningEmbed(reels, 2, bet)], components: [] });
 
   await delay(1000);
-  await editReply({
-    embeds: [resultEmbed(reels, result, bet)],
-    components: [playAgainRow(userId)],
-  });
+  await message.edit({ embeds: [buildResultEmbed(reels, result, bet)], components: [playAgainRow(userId)] });
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -165,70 +174,37 @@ module.exports = {
       return;
     }
 
-    // Send initial spinning embed to get a message reference
     await interaction.reply({ embeds: [spinningEmbed([], 0, bet)], components: [] });
     const message = await interaction.fetchReply();
 
-    // Clear any previous Play Again session for this user
-    const prev = activeSessions.get(userId);
-    if (prev) {
-      clearTimeout(prev.timeout);
-      activeSessions.delete(userId);
-    }
-
-    await runSpin({
-      userId,
-      username,
-      bet,
-      editReply: opts => interaction.editReply(opts),
-    });
-
-    // Register Play Again session with 5-min cleanup
-    const timeout = setTimeout(async () => {
-      if (!activeSessions.has(userId)) return;
-      activeSessions.delete(userId);
-      try {
-        await message.edit({ components: [playAgainRow(userId, true)] });
-      } catch {
-        // Message may have been deleted — ignore
-      }
-    }, PLAY_AGAIN_TIMEOUT_MS);
-
-    activeSessions.set(userId, { bet, timeout, message });
+    await runSpin({ userId, username, bet, message });
+    setupSession(userId, bet, message);
   },
 
   // ─── Button: Play Again ────────────────────────────────────────────────────
 
   async handlePlayAgain(interaction, userId) {
-    if (interaction.user.id !== userId) {
-      // Silently ignore clicks from other users
-      return interaction.deferUpdate();
-    }
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
 
     const session = activeSessions.get(userId);
-    if (!session) {
-      return interaction.deferUpdate();
-    }
+    if (!session) return interaction.deferUpdate();
 
     const { bet } = session;
     const username = interaction.user.username;
 
-    // Cooldown check
+    // Cooldown — leave old button enabled so they can retry
     const remaining = checkCooldown(userId, 'slots', SLOTS_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
-      const msg = await interaction.reply({ content: `⏳ Wait **${secs}s** before spinning again.`, flags: 64 });
-      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      await interaction.reply({ content: `⏳ Wait **${secs}s** before spinning again.`, flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
       return;
     }
 
-    // Balance check
+    // Balance — disable button and show error
     const balance = getPlayer(userId).balance ?? 0;
     if (balance < bet) {
-      await interaction.update({
-        embeds: interaction.message.embeds,
-        components: [playAgainRow(userId, true)],
-      });
+      await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
       const msg = await interaction.followUp({
         content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
         flags: 64,
@@ -237,26 +213,11 @@ module.exports = {
       return;
     }
 
-    // Reset the 5-min cleanup timer
-    clearTimeout(session.timeout);
-    const newTimeout = setTimeout(async () => {
-      if (!activeSessions.has(userId)) return;
-      activeSessions.delete(userId);
-      try {
-        await session.message.edit({ components: [playAgainRow(userId, true)] });
-      } catch {
-        // ignore
-      }
-    }, PLAY_AGAIN_TIMEOUT_MS);
-    session.timeout = newTimeout;
+    // Disable old button, post new spin message
+    await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+    const newMsg = await interaction.followUp({ embeds: [spinningEmbed([], 0, bet)], components: [] });
 
-    await interaction.deferUpdate();
-
-    await runSpin({
-      userId,
-      username,
-      bet,
-      editReply: opts => interaction.editReply(opts),
-    });
+    await runSpin({ userId, username, bet, message: newMsg });
+    setupSession(userId, bet, newMsg);
   },
 };
