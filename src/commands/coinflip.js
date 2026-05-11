@@ -44,7 +44,7 @@ module.exports = {
     // ── Betting flow ──────────────────────────────────────────────────
 
     // Cooldown check
-    const remaining = checkCooldown(userId, 'coinflip');
+    const remaining = checkCooldown(userId, 'coinflip', 5_000);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
       return interaction.reply({

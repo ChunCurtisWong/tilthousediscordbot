@@ -154,6 +154,15 @@ module.exports = {
             await betCmd.handleDecline(interaction, betId);
           }
 
+        // Slots buttons
+        } else if (customId.startsWith('sl:')) {
+          const slotsCmd = interaction.client.commands.get('th-slots');
+          if (customId.startsWith('sl:again:')) {
+            const playerId = customId.slice('sl:again:'.length);
+            logger.info('Button: slots play again', { playerId, userId: interaction.user.id });
+            await slotsCmd.handlePlayAgain(interaction, playerId);
+          }
+
         // Blackjack buttons
         } else if (customId.startsWith('bj:')) {
           const bjCmd = interaction.client.commands.get('th-blackjack');

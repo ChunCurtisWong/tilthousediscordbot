@@ -1,8 +1,15 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} = require('discord.js');
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const SLOTS_COOLDOWN_MS = 10_000;
+const SLOTS_COOLDOWN_MS = 5_000;
+const PLAY_AGAIN_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_BET = 10;
 const MAX_BET = 500;
 
@@ -20,6 +27,11 @@ const TOTAL_WEIGHT = SYMBOLS.reduce((s, sym) => s + sym.weight, 0);
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// In-memory state for Play Again buttons — cleared on bot restart (intentional)
+const activeSessions = new Map(); // userId → { bet, timeout, message }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function spinReel() {
   let r = Math.random() * TOTAL_WEIGHT;
   for (const sym of SYMBOLS) {
@@ -30,9 +42,7 @@ function spinReel() {
 }
 
 function analyzeResult([r1, r2, r3]) {
-  if (r1.emoji === r2.emoji && r2.emoji === r3.emoji) {
-    return { type: 'three', symbol: r1 };
-  }
+  if (r1.emoji === r2.emoji && r2.emoji === r3.emoji) return { type: 'three', symbol: r1 };
   if (r1.emoji === r2.emoji) return { type: 'two', symbol: r1 };
   if (r2.emoji === r3.emoji) return { type: 'two', symbol: r2 };
   if (r1.emoji === r3.emoji) return { type: 'two', symbol: r1 };
@@ -49,6 +59,73 @@ function spinningEmbed(reels, revealed, bet) {
     .setTitle('🎰 Spinning...')
     .setDescription(`[ ${reelStr(reels, revealed)} ]\n\nBet: **${bet} 🪙**`);
 }
+
+function resultEmbed(reels, result, bet) {
+  let color, title, outcomeLines;
+  if (result.type === 'three') {
+    const payout = result.symbol.payout * bet;
+    color = '#FFD700';
+    title = result.symbol.payout >= 50 ? '🎰 JACKPOT!'
+          : result.symbol.payout >= 10 ? '🎉 Big Win!'
+          : '🎉 Winner!';
+    outcomeLines = `Three ${result.symbol.name}s!\nBet: **${bet} 🪙**\nWon: **+${payout} 🪙**`;
+  } else if (result.type === 'two') {
+    const returned = bet - Math.round(bet * 0.1);
+    color = '#5865F2';
+    title = '🔵 Almost!';
+    outcomeLines = `Two ${result.symbol.name}s!\nBet: **${bet} 🪙**\nReturned: **${returned} 🪙**`;
+  } else {
+    color = '#FF4444';
+    title = '💀 No Match!';
+    outcomeLines = `No match!\nBet: **${bet} 🪙**\nLost: **-${bet} 🪙**`;
+  }
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(`[ ${reelStr(reels, 3)} ]\n\n${outcomeLines}`);
+}
+
+function playAgainRow(userId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`sl:again:${userId}`)
+      .setLabel('Play Again')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled)
+  );
+}
+
+// ─── Shared spin logic (used by both execute and handlePlayAgain) ─────────────
+
+async function runSpin({ userId, username, bet, editReply }) {
+  const reels  = [spinReel(), spinReel(), spinReel()];
+  const result = analyzeResult(reels);
+
+  let netChange;
+  if (result.type === 'three')     netChange = result.symbol.payout * bet;
+  else if (result.type === 'two')  netChange = -Math.round(bet * 0.1);
+  else                             netChange = -bet;
+
+  await editReply({ embeds: [spinningEmbed(reels, 0, bet)], components: [] });
+
+  const newBalance = await addTrinkets(userId, netChange, username);
+  await setCooldown(userId, 'slots');
+  logger.info('Slots result', { userId, bet, type: result.type, netChange, newBalance });
+
+  await delay(1500);
+  await editReply({ embeds: [spinningEmbed(reels, 1, bet)], components: [] });
+
+  await delay(1000);
+  await editReply({ embeds: [spinningEmbed(reels, 2, bet)], components: [] });
+
+  await delay(1000);
+  await editReply({
+    embeds: [resultEmbed(reels, result, bet)],
+    components: [playAgainRow(userId)],
+  });
+}
+
+// ─── Command ──────────────────────────────────────────────────────────────────
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -72,17 +149,13 @@ module.exports = {
     const remaining = checkCooldown(userId, 'slots', SLOTS_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
-      await interaction.reply({
-        content: `⏳ Wait **${secs}s** before spinning again.`,
-        flags: 64,
-      });
+      await interaction.reply({ content: `⏳ Wait **${secs}s** before spinning again.`, flags: 64 });
       setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
       return;
     }
 
     // Balance check
-    const player  = getPlayer(userId);
-    const balance = player.balance ?? 0;
+    const balance = getPlayer(userId).balance ?? 0;
     if (balance < bet) {
       await interaction.reply({
         content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
@@ -92,64 +165,98 @@ module.exports = {
       return;
     }
 
-    // Spin and evaluate
-    const reels  = [spinReel(), spinReel(), spinReel()];
-    const result = analyzeResult(reels);
+    // Send initial spinning embed to get a message reference
+    await interaction.reply({ embeds: [spinningEmbed([], 0, bet)], components: [] });
+    const message = await interaction.fetchReply();
 
-    let netChange;
-    if (result.type === 'three') {
-      netChange = result.symbol.payout * bet;
-    } else if (result.type === 'two') {
-      netChange = -Math.round(bet * 0.1);
-    } else {
-      netChange = -bet;
+    // Clear any previous Play Again session for this user
+    const prev = activeSessions.get(userId);
+    if (prev) {
+      clearTimeout(prev.timeout);
+      activeSessions.delete(userId);
     }
 
-    // Phase 1 — send initial spinning embed immediately
-    await interaction.reply({ embeds: [spinningEmbed(reels, 0, bet)] });
+    await runSpin({
+      userId,
+      username,
+      bet,
+      editReply: opts => interaction.editReply(opts),
+    });
 
-    // Commit transaction right after the reply is sent
-    const newBalance = await addTrinkets(userId, netChange, username);
-    await setCooldown(userId, 'slots');
-    logger.info('Slots result', { userId, bet, type: result.type, netChange, newBalance });
+    // Register Play Again session with 5-min cleanup
+    const timeout = setTimeout(async () => {
+      if (!activeSessions.has(userId)) return;
+      activeSessions.delete(userId);
+      try {
+        await message.edit({ components: [playAgainRow(userId, true)] });
+      } catch {
+        // Message may have been deleted — ignore
+      }
+    }, PLAY_AGAIN_TIMEOUT_MS);
 
-    // Phase 2 — reveal reel 1
-    await delay(1500);
-    await interaction.editReply({ embeds: [spinningEmbed(reels, 1, bet)] });
+    activeSessions.set(userId, { bet, timeout, message });
+  },
 
-    // Phase 3 — reveal reel 2
-    await delay(1000);
-    await interaction.editReply({ embeds: [spinningEmbed(reels, 2, bet)] });
+  // ─── Button: Play Again ────────────────────────────────────────────────────
 
-    // Phase 4 — final result
-    await delay(1000);
-
-    let color, title, outcomeLines;
-    if (result.type === 'three') {
-      const payout = result.symbol.payout * bet;
-      color = '#FFD700';
-      title = result.symbol.payout >= 50 ? '🎰 JACKPOT!'
-            : result.symbol.payout >= 10 ? '🎉 Big Win!'
-            : '🎉 Winner!';
-      outcomeLines = `Three ${result.symbol.name}s!\nBet: **${bet} 🪙**\nWon: **+${payout} 🪙**`;
-    } else if (result.type === 'two') {
-      const returned = bet - Math.round(bet * 0.1);
-      color = '#5865F2';
-      title = '🔵 Almost!';
-      outcomeLines = `Two ${result.symbol.name}s!\nBet: **${bet} 🪙**\nReturned: **${returned} 🪙**`;
-    } else {
-      color = '#FF4444';
-      title = '💀 No Match!';
-      outcomeLines = `No match!\nBet: **${bet} 🪙**\nLost: **-${bet} 🪙**`;
+  async handlePlayAgain(interaction, userId) {
+    if (interaction.user.id !== userId) {
+      // Silently ignore clicks from other users
+      return interaction.deferUpdate();
     }
 
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(color)
-          .setTitle(title)
-          .setDescription(`${reelStr(reels, 3)}\n\n${outcomeLines}`),
-      ],
+    const session = activeSessions.get(userId);
+    if (!session) {
+      return interaction.deferUpdate();
+    }
+
+    const { bet } = session;
+    const username = interaction.user.username;
+
+    // Cooldown check
+    const remaining = checkCooldown(userId, 'slots', SLOTS_COOLDOWN_MS);
+    if (remaining !== null) {
+      const secs = Math.ceil(remaining / 1000);
+      const msg = await interaction.reply({ content: `⏳ Wait **${secs}s** before spinning again.`, flags: 64 });
+      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      return;
+    }
+
+    // Balance check
+    const balance = getPlayer(userId).balance ?? 0;
+    if (balance < bet) {
+      await interaction.update({
+        embeds: interaction.message.embeds,
+        components: [playAgainRow(userId, true)],
+      });
+      const msg = await interaction.followUp({
+        content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
+        flags: 64,
+      });
+      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      return;
+    }
+
+    // Reset the 5-min cleanup timer
+    clearTimeout(session.timeout);
+    const newTimeout = setTimeout(async () => {
+      if (!activeSessions.has(userId)) return;
+      activeSessions.delete(userId);
+      try {
+        await session.message.edit({ components: [playAgainRow(userId, true)] });
+      } catch {
+        // ignore
+      }
+    }, PLAY_AGAIN_TIMEOUT_MS);
+    session.timeout = newTimeout;
+
+    await interaction.deferUpdate();
+
+    await runSpin({
+      userId,
+      username,
+      bet,
+      editReply: opts => interaction.editReply(opts),
     });
   },
 };
