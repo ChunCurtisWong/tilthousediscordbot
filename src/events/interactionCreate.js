@@ -154,6 +154,15 @@ module.exports = {
             await betCmd.handleDecline(interaction, betId);
           }
 
+        // Fish buttons
+        } else if (customId.startsWith('fc:')) {
+          const fishCmd = interaction.client.commands.get('th-fish');
+          if (customId.startsWith('fc:recast:')) {
+            const playerId = customId.slice('fc:recast:'.length);
+            logger.info('Button: fish recast', { playerId, userId: interaction.user.id });
+            await fishCmd.handleRecast(interaction, playerId);
+          }
+
         // Slots buttons
         } else if (customId.startsWith('sl:')) {
           const slotsCmd = interaction.client.commands.get('th-slots');

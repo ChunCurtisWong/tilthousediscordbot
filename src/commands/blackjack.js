@@ -8,7 +8,7 @@ const {
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const BJ_COOLDOWN_MS = 10_000;
+const BJ_COOLDOWN_MS = 5_000;
 const MIN_BET  = 10;
 const MAX_BET  = 500;
 const TIMEOUT_MS = 5 * 60 * 1000;
