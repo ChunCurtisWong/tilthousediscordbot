@@ -14,13 +14,12 @@ module.exports = {
     if (!session) {
       const embed = new EmbedBuilder()
         .setColor('#5865F2')
-        .setTitle(`🧊 ${username}'s Icebox`)
+        .setTitle(`🎣 ${username}'s Fishing Log`)
         .setDescription('🧊 Your icebox is empty!\nStart a fishing session with `/th-fish`');
       return interaction.reply({ embeds: [embed] });
     }
 
-    const embed = fishCmd.buildSummaryEmbed(session)
-      .setTitle(`🧊 ${username}'s Icebox`);
+    const embed = fishCmd.buildSummaryEmbed(session);
 
     await interaction.reply({ embeds: [embed], components: [fishCmd.iceboxButtons(userId)] });
     const msg = await interaction.fetchReply();

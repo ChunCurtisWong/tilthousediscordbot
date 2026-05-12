@@ -243,7 +243,7 @@ function buildSummaryEmbed(session) {
 
   return new EmbedBuilder()
     .setColor(color)
-    .setTitle('🎣 Session Summary')
+    .setTitle(`🎣 ${session.username}'s Fishing Log`)
     .setDescription(desc);
 }
 
@@ -258,8 +258,9 @@ function startSessionTimeout(session, userId) {
   }, SESSION_TIMEOUT_MS);
 }
 
-function newSession(cast, castKey, message) {
+function newSession(username, cast, castKey, message) {
   return {
+    username,
     cast,
     castKey,
     castsByType: { standard: 0, enhanced: 0, premium: 0 },
@@ -279,9 +280,9 @@ function cleanupIceboxMessages(session) {
   }
 }
 
-async function updateIceboxMessages(session, userId, username) {
+async function updateIceboxMessages(session, userId) {
   if (session.iceboxMessages.length === 0) return;
-  const embed = buildSummaryEmbed(session).setTitle(`🧊 ${username}'s Icebox`);
+  const embed = buildSummaryEmbed(session);
   const alive = [];
   for (const msg of session.iceboxMessages) {
     try {
@@ -348,7 +349,7 @@ async function runCast({ userId, username, cast, castKey, message, session }) {
 
   await delay(1000);
   await message.edit({ embeds: [buildResultEmbed(cast, result, username)], components: [gameButtons(userId)] });
-  await updateIceboxMessages(session, userId, username);
+  await updateIceboxMessages(session, userId);
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -408,7 +409,7 @@ module.exports = {
     await interaction.reply({ embeds: [phaseEmbed(1, username, cast)], components: [] });
     const message = await interaction.fetchReply();
 
-    const session = newSession(cast, castKey, message);
+    const session = newSession(username, cast, castKey, message);
     activeSessions.set(userId, session);
 
     await runCast({ userId, username, cast, castKey, message, session });
@@ -476,8 +477,7 @@ module.exports = {
     const session = activeSessions.get(userId);
     if (!session) return interaction.deferUpdate();
 
-    const username = interaction.user.username;
-    const embed = buildSummaryEmbed(session).setTitle(`🧊 ${username}'s Icebox`);
+    const embed = buildSummaryEmbed(session);
 
     await interaction.reply({ embeds: [embed], components: [iceboxButtons(userId)] });
     const msg = await interaction.fetchReply();
@@ -521,7 +521,7 @@ module.exports = {
 
     if (!session) return;
 
-    const embed = buildSummaryEmbed(session).setTitle(`🧊 ${interaction.user.username}'s Icebox`);
+    const embed = buildSummaryEmbed(session);
     const newMsg = await interaction.channel.send({
       embeds: [embed],
       components: [iceboxButtons(userId)],
