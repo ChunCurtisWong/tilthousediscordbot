@@ -22,7 +22,7 @@ module.exports = {
     const embed = fishCmd.buildSummaryEmbed(session)
       .setTitle(`🧊 ${username}'s Icebox`);
 
-    await interaction.reply({ embeds: [embed] });
+    await interaction.reply({ embeds: [embed], components: [fishCmd.iceboxButtons(userId)] });
     const msg = await interaction.fetchReply();
     session.iceboxMessages.push(msg);
   },

@@ -99,6 +99,10 @@ function gameButtons(userId, playAgainDisabled = false) {
       .setLabel('Change Bet')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
+      .setCustomId(`sl:refresh:${userId}`)
+      .setLabel('Refresh')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId(`sl:stop:${userId}`)
       .setLabel('Stop Playing')
       .setStyle(ButtonStyle.Secondary)
@@ -276,6 +280,25 @@ module.exports = {
     activeSessions.delete(userId);
 
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
+  },
+
+  // ─── Button: Refresh ──────────────────────────────────────────────────────
+
+  async handleRefresh(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    await interaction.deferUpdate();
+
+    const embeds = session.message.embeds;
+    try { await session.message.delete(); } catch { /* ignore */ }
+
+    session.message = await interaction.channel.send({
+      embeds,
+      components: [gameButtons(userId)],
+    });
   },
 
   // ─── Button: Change Bet ────────────────────────────────────────────────────

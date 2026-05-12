@@ -189,8 +189,21 @@ function gameButtons(userId, recastDisabled = false) {
       .setLabel('Change Bait')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
+      .setCustomId(`fc:refresh:${userId}`)
+      .setLabel('Refresh')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId(`fc:home:${userId}`)
       .setLabel('Go Home')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function iceboxButtons(userId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`fc:icebox_refresh:${userId}`)
+      .setLabel('Refresh')
       .setStyle(ButtonStyle.Secondary)
   );
 }
@@ -262,6 +275,19 @@ function cleanupIceboxMessages(session) {
   }
 }
 
+async function updateIceboxMessages(session, userId, username) {
+  if (session.iceboxMessages.length === 0) return;
+  const embed = buildSummaryEmbed(session).setTitle(`🧊 ${username}'s Icebox`);
+  const alive = [];
+  for (const msg of session.iceboxMessages) {
+    try {
+      await msg.edit({ embeds: [embed], components: [iceboxButtons(userId)] });
+      alive.push(msg);
+    } catch { /* message was deleted externally — drop it */ }
+  }
+  session.iceboxMessages = alive;
+}
+
 // ─── Shared cast logic ────────────────────────────────────────────────────────
 
 async function runCast({ userId, username, cast, castKey, message, session }) {
@@ -318,6 +344,7 @@ async function runCast({ userId, username, cast, castKey, message, session }) {
 
   await delay(1000);
   await message.edit({ embeds: [buildResultEmbed(cast, result, username)], components: [gameButtons(userId)] });
+  await updateIceboxMessages(session, userId, username);
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -436,6 +463,51 @@ module.exports = {
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
   },
 
+  // ─── Button: Refresh (game embed) ─────────────────────────────────────────
+
+  async handleRefresh(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    await interaction.deferUpdate();
+
+    const embeds = session.message.embeds;
+    try { await session.message.delete(); } catch { /* ignore */ }
+
+    session.message = await interaction.channel.send({
+      embeds,
+      components: [gameButtons(userId)],
+    });
+  },
+
+  // ─── Button: Refresh (icebox embed) ───────────────────────────────────────
+
+  async handleIceboxRefresh(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    await interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    const currentMsg = interaction.message;
+
+    if (session) {
+      session.iceboxMessages = session.iceboxMessages.filter(m => m.id !== currentMsg.id);
+    }
+
+    try { await currentMsg.delete(); } catch { /* ignore */ }
+
+    if (!session) return;
+
+    const embed = buildSummaryEmbed(session).setTitle(`🧊 ${interaction.user.username}'s Icebox`);
+    const newMsg = await interaction.channel.send({
+      embeds: [embed],
+      components: [iceboxButtons(userId)],
+    });
+    session.iceboxMessages.push(newMsg);
+  },
+
   // ─── Button: Change Bait ───────────────────────────────────────────────────
 
   async handleChangeBait(interaction, userId) {
@@ -503,5 +575,6 @@ module.exports = {
 
   // Exported for /th-icebox
   buildSummaryEmbed,
+  iceboxButtons,
   getSession: userId => activeSessions.get(userId),
 };

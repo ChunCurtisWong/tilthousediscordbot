@@ -174,6 +174,14 @@ module.exports = {
             const playerId = customId.slice('fc:changebait:'.length);
             logger.info('Button: fish change bait', { playerId, userId: interaction.user.id });
             await fishCmd.handleChangeBait(interaction, playerId);
+          } else if (customId.startsWith('fc:refresh:')) {
+            const playerId = customId.slice('fc:refresh:'.length);
+            logger.info('Button: fish refresh', { playerId, userId: interaction.user.id });
+            await fishCmd.handleRefresh(interaction, playerId);
+          } else if (customId.startsWith('fc:icebox_refresh:')) {
+            const playerId = customId.slice('fc:icebox_refresh:'.length);
+            logger.info('Button: icebox refresh', { playerId, userId: interaction.user.id });
+            await fishCmd.handleIceboxRefresh(interaction, playerId);
           } else if (customId.startsWith('fc:home:')) {
             const playerId = customId.slice('fc:home:'.length);
             logger.info('Button: fish go home', { playerId, userId: interaction.user.id });
@@ -191,6 +199,10 @@ module.exports = {
             const playerId = customId.slice('sl:changebet:'.length);
             logger.info('Button: slots change bet', { playerId, userId: interaction.user.id });
             await slotsCmd.handleChangeBet(interaction, playerId);
+          } else if (customId.startsWith('sl:refresh:')) {
+            const playerId = customId.slice('sl:refresh:'.length);
+            logger.info('Button: slots refresh', { playerId, userId: interaction.user.id });
+            await slotsCmd.handleRefresh(interaction, playerId);
           } else if (customId.startsWith('sl:stop:')) {
             const playerId = customId.slice('sl:stop:'.length);
             logger.info('Button: slots stop playing', { playerId, userId: interaction.user.id });
@@ -216,6 +228,10 @@ module.exports = {
             const playerId = customId.slice('bj:changebet:'.length);
             logger.info('Button: blackjack change bet', { playerId, userId: interaction.user.id });
             await bjCmd.handleChangeBet(interaction, playerId);
+          } else if (customId.startsWith('bj:refresh:')) {
+            const playerId = customId.slice('bj:refresh:'.length);
+            logger.info('Button: blackjack refresh', { playerId, userId: interaction.user.id });
+            await bjCmd.handleRefresh(interaction, playerId);
           } else if (customId.startsWith('bj:stop:')) {
             const playerId = customId.slice('bj:stop:'.length);
             logger.info('Button: blackjack stop playing', { playerId, userId: interaction.user.id });
