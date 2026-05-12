@@ -247,6 +247,27 @@ function buildSummaryEmbed(session) {
     .setDescription(desc);
 }
 
+function buildIceboxEmbed(session) {
+  const fishLines = [];
+  for (const [name, entry] of session.fishLog) {
+    fishLines.push(`${entry.emoji} ${name} ×${entry.count}`);
+  }
+
+  let desc = fishLines.length > 0
+    ? `**Currently in your bucket:**\n${fishLines.join('\n')}`
+    : 'Nothing caught yet!';
+
+  if (session.itemLosses.length > 0) {
+    const lossLines = session.itemLosses.map(l => `• ${l.emoji} ${l.msg} — **-${l.cost} 🪙**`);
+    desc += `\n\n**Item Losses:**\n${lossLines.join('\n')}`;
+  }
+
+  return new EmbedBuilder()
+    .setColor('#5865F2')
+    .setTitle(`🧊 ${session.username}'s Icebox`)
+    .setDescription(desc);
+}
+
 function startSessionTimeout(session, userId) {
   clearTimeout(session.timeout);
   session.timeout = setTimeout(async () => {
@@ -282,7 +303,7 @@ function cleanupIceboxMessages(session) {
 
 async function updateIceboxMessages(session, userId) {
   if (session.iceboxMessages.length === 0) return;
-  const embed = buildSummaryEmbed(session);
+  const embed = buildIceboxEmbed(session);
   const alive = [];
   for (const msg of session.iceboxMessages) {
     try {
@@ -477,7 +498,7 @@ module.exports = {
     const session = activeSessions.get(userId);
     if (!session) return interaction.deferUpdate();
 
-    const embed = buildSummaryEmbed(session);
+    const embed = buildIceboxEmbed(session);
 
     await interaction.reply({ embeds: [embed], components: [iceboxButtons(userId)] });
     const msg = await interaction.fetchReply();
@@ -521,7 +542,7 @@ module.exports = {
 
     if (!session) return;
 
-    const embed = buildSummaryEmbed(session);
+    const embed = buildIceboxEmbed(session);
     const newMsg = await interaction.channel.send({
       embeds: [embed],
       components: [iceboxButtons(userId)],
@@ -596,6 +617,7 @@ module.exports = {
 
   // Exported for /th-icebox
   buildSummaryEmbed,
+  buildIceboxEmbed,
   iceboxButtons,
   getSession: userId => activeSessions.get(userId),
 };

@@ -19,7 +19,7 @@ module.exports = {
       return interaction.reply({ embeds: [embed] });
     }
 
-    const embed = fishCmd.buildSummaryEmbed(session);
+    const embed = fishCmd.buildIceboxEmbed(session);
 
     await interaction.reply({ embeds: [embed], components: [fishCmd.iceboxButtons(userId)] });
     const msg = await interaction.fetchReply();
