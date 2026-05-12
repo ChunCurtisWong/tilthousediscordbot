@@ -170,6 +170,10 @@ module.exports = {
             const playerId = customId.slice('fc:recast:'.length);
             logger.info('Button: fish recast', { playerId, userId: interaction.user.id });
             await fishCmd.handleRecast(interaction, playerId);
+          } else if (customId.startsWith('fc:changebait:')) {
+            const playerId = customId.slice('fc:changebait:'.length);
+            logger.info('Button: fish change bait', { playerId, userId: interaction.user.id });
+            await fishCmd.handleChangeBait(interaction, playerId);
           } else if (customId.startsWith('fc:home:')) {
             const playerId = customId.slice('fc:home:'.length);
             logger.info('Button: fish go home', { playerId, userId: interaction.user.id });
@@ -183,6 +187,10 @@ module.exports = {
             const playerId = customId.slice('sl:again:'.length);
             logger.info('Button: slots play again', { playerId, userId: interaction.user.id });
             await slotsCmd.handlePlayAgain(interaction, playerId);
+          } else if (customId.startsWith('sl:changebet:')) {
+            const playerId = customId.slice('sl:changebet:'.length);
+            logger.info('Button: slots change bet', { playerId, userId: interaction.user.id });
+            await slotsCmd.handleChangeBet(interaction, playerId);
           } else if (customId.startsWith('sl:stop:')) {
             const playerId = customId.slice('sl:stop:'.length);
             logger.info('Button: slots stop playing', { playerId, userId: interaction.user.id });
@@ -204,6 +212,10 @@ module.exports = {
             const playerId = customId.slice('bj:again:'.length);
             logger.info('Button: blackjack play again', { playerId, userId: interaction.user.id });
             await bjCmd.handlePlayAgain(interaction, playerId);
+          } else if (customId.startsWith('bj:changebet:')) {
+            const playerId = customId.slice('bj:changebet:'.length);
+            logger.info('Button: blackjack change bet', { playerId, userId: interaction.user.id });
+            await bjCmd.handleChangeBet(interaction, playerId);
           } else if (customId.startsWith('bj:stop:')) {
             const playerId = customId.slice('bj:stop:'.length);
             logger.info('Button: blackjack stop playing', { playerId, userId: interaction.user.id });
@@ -288,6 +300,11 @@ module.exports = {
         cmd = interaction.client.commands.get('th-restore');
         handler = cmd?.handleSelect;
         logLabel = 'Select: restore backup';
+      // Fish bait select
+      } else if (customId === 'fc:bait_select') {
+        cmd = interaction.client.commands.get('th-fish');
+        handler = cmd?.handleBaitSelect;
+        logLabel = 'Select: fish change bait';
       }
 
       if (handler) {
@@ -322,6 +339,12 @@ module.exports = {
           const game = customId.slice('q:sno_modal:'.length);
           logger.info('Modal: session no new time', { game, userId: interaction.user.id });
           await interaction.client.commands.get('th-queue').handleSessionNoNewTimeSubmit(interaction, game);
+        } else if (customId === 'sl:bet_modal') {
+          logger.info('Modal: slots change bet', { userId: interaction.user.id });
+          await interaction.client.commands.get('th-slots').handleBetModal(interaction);
+        } else if (customId === 'bj:bet_modal') {
+          logger.info('Modal: blackjack change bet', { userId: interaction.user.id });
+          await interaction.client.commands.get('th-blackjack').handleBetModal(interaction);
         }
       } catch (err) {
         await safeError(interaction, err, 'Modal interaction error');

@@ -4,6 +4,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require('discord.js');
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
@@ -65,6 +68,10 @@ function gameButtons(userId, playAgainDisabled = false) {
       .setLabel('Play Again')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(playAgainDisabled),
+    new ButtonBuilder()
+      .setCustomId(`bj:changebet:${userId}`)
+      .setLabel('Change Bet')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`bj:stop:${userId}`)
       .setLabel('Stop Playing')
@@ -392,5 +399,73 @@ module.exports = {
     activeGames.delete(userId); // cancel any in-progress game
 
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
+  },
+
+  // ─── Button: Change Bet ────────────────────────────────────────────
+
+  async handleChangeBet(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    if (activeGames.has(userId)) return interaction.deferUpdate();
+
+    const modal = new ModalBuilder()
+      .setCustomId('bj:bet_modal')
+      .setTitle('Change Bet');
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('bet_amount')
+          .setLabel(`New bet amount (${MIN_BET}–${MAX_BET} Trinkets)`)
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder(`Current bet: ${session.bet}`)
+          .setRequired(true)
+      )
+    );
+
+    await interaction.showModal(modal);
+  },
+
+  // ─── Modal: Bet amount submit ──────────────────────────────────────
+
+  async handleBetModal(interaction) {
+    const userId  = interaction.user.id;
+    const session = activeSessions.get(userId);
+
+    if (!session) {
+      await interaction.reply({ content: '❌ No active blackjack session found.', flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    const input  = interaction.fields.getTextInputValue('bet_amount').trim();
+    const newBet = parseInt(input, 10);
+
+    if (isNaN(newBet) || newBet < MIN_BET || newBet > MAX_BET) {
+      await interaction.reply({
+        content: `❌ Invalid bet. Must be between **${MIN_BET}** and **${MAX_BET} 🪙**.`,
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    const balance = getPlayer(userId).balance ?? 0;
+    if (balance < newBet) {
+      await interaction.reply({
+        content: `❌ You don't have enough Trinkets for that bet.\nYour balance: **${balance} 🪙**`,
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    session.bet = newBet;
+
+    await interaction.reply({ content: `✅ Bet updated to **${newBet} 🪙**!`, flags: 64 });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 };

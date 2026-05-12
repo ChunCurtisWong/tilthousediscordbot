@@ -4,6 +4,8 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
 } = require('discord.js');
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
@@ -182,6 +184,10 @@ function gameButtons(userId, recastDisabled = false) {
       .setLabel('Recast')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(recastDisabled),
+    new ButtonBuilder()
+      .setCustomId(`fc:changebait:${userId}`)
+      .setLabel('Change Bait')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`fc:home:${userId}`)
       .setLabel('Go Home')
@@ -412,6 +418,71 @@ module.exports = {
     activeSessions.delete(userId);
 
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
+  },
+
+  // ─── Button: Change Bait ───────────────────────────────────────────────────
+
+  async handleChangeBait(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    const select = new StringSelectMenuBuilder()
+      .setCustomId('fc:bait_select')
+      .setPlaceholder('Choose a cast type')
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Standard Cast (-20 Trinkets)')
+          .setValue('standard')
+          .setDefault(session.castKey === 'standard'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Enhanced Cast (-40 Trinkets)')
+          .setValue('enhanced')
+          .setDefault(session.castKey === 'enhanced'),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Premium Cast (-65 Trinkets)')
+          .setValue('premium')
+          .setDefault(session.castKey === 'premium'),
+      );
+
+    await interaction.reply({
+      content: 'Select a cast type for your next cast:',
+      components: [new ActionRowBuilder().addComponents(select)],
+      flags: 64,
+    });
+  },
+
+  // ─── Select: Bait select ───────────────────────────────────────────────────
+
+  async handleBaitSelect(interaction) {
+    const userId  = interaction.user.id;
+    const session = activeSessions.get(userId);
+
+    if (!session) {
+      await interaction.reply({ content: '❌ No active fishing session found.', flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    const newCastKey = interaction.values[0];
+    const newCast    = CASTS[newCastKey];
+
+    const balance = getPlayer(userId).balance ?? 0;
+    if (balance < newCast.cost) {
+      await interaction.update({
+        content: `❌ You don't have enough Trinkets for a ${newCast.tier} Cast.\nYour balance: **${balance} 🪙**`,
+        components: [],
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    session.cast    = newCast;
+    session.castKey = newCastKey;
+
+    await interaction.update({ content: `✅ Bait changed to **${newCast.tier} Cast** (-${newCast.cost} 🪙)!`, components: [] });
+    setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 
   // Accessor for /th-icebox
