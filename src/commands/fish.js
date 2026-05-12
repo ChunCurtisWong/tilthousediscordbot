@@ -68,10 +68,10 @@ const CASTS = {
       { emoji: '🎣', name: 'Rod',  cost: 150 },
     ],
     fish: [
-      { emoji: '🐟', name: 'Common Fish',   weight: 13, reward:   10 },
+      { emoji: '🐟', name: 'Common Fish',   weight: 15, reward:   10 },
       { emoji: '🐠', name: 'Tropical Fish', weight: 18, reward:   25 },
       { emoji: '🐡', name: 'Puffer Fish',   weight: 25, reward:   50 },
-      { emoji: '🦈', name: 'Shark',         weight: 20, reward:  150 },
+      { emoji: '🦈', name: 'Shark',         weight: 18, reward:  150 },
       { emoji: '🦑', name: 'Squid',         weight:  8, reward:  600 },
       { emoji: '🧦', name: 'Old Boot',      weight:  6, reward:    0 },
       { emoji: '💀', name: 'Skeleton Fish', weight: 10, reward:  -50 },
