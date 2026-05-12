@@ -170,6 +170,10 @@ module.exports = {
             const playerId = customId.slice('fc:recast:'.length);
             logger.info('Button: fish recast', { playerId, userId: interaction.user.id });
             await fishCmd.handleRecast(interaction, playerId);
+          } else if (customId.startsWith('fc:home:')) {
+            const playerId = customId.slice('fc:home:'.length);
+            logger.info('Button: fish go home', { playerId, userId: interaction.user.id });
+            await fishCmd.handleGoHome(interaction, playerId);
           }
 
         // Slots buttons
@@ -179,6 +183,10 @@ module.exports = {
             const playerId = customId.slice('sl:again:'.length);
             logger.info('Button: slots play again', { playerId, userId: interaction.user.id });
             await slotsCmd.handlePlayAgain(interaction, playerId);
+          } else if (customId.startsWith('sl:stop:')) {
+            const playerId = customId.slice('sl:stop:'.length);
+            logger.info('Button: slots stop playing', { playerId, userId: interaction.user.id });
+            await slotsCmd.handleStop(interaction, playerId);
           }
 
         // Blackjack buttons
@@ -196,6 +204,10 @@ module.exports = {
             const playerId = customId.slice('bj:again:'.length);
             logger.info('Button: blackjack play again', { playerId, userId: interaction.user.id });
             await bjCmd.handlePlayAgain(interaction, playerId);
+          } else if (customId.startsWith('bj:stop:')) {
+            const playerId = customId.slice('bj:stop:'.length);
+            logger.info('Button: blackjack stop playing', { playerId, userId: interaction.user.id });
+            await bjCmd.handleStop(interaction, playerId);
           }
 
         // Restore buttons

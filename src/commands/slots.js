@@ -8,8 +8,8 @@ const {
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const SLOTS_COOLDOWN_MS = 5_000;
-const PLAY_AGAIN_TIMEOUT_MS = 5 * 60 * 1000;
+const SLOTS_COOLDOWN_MS  = 5_000;
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_BET = 10;
 const MAX_BET = 500;
 
@@ -26,8 +26,8 @@ const SYMBOLS = [
 const TOTAL_WEIGHT = SYMBOLS.reduce((s, sym) => s + sym.weight, 0);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// In-memory state — cleared on bot restart (intentional)
-const activeSessions = new Map(); // userId → { bet, timeout, message }
+// userId → { bet, roundsPlayed, spent, earned, net, timeout, message }
+const activeSessions = new Map();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -84,27 +84,43 @@ function buildResultEmbed(reels, result, bet) {
     .setDescription(`[ ${reelStr(reels, 3)} ]\n\n${outcomeLines}`);
 }
 
-function playAgainRow(userId, disabled = false) {
+function gameButtons(userId, playAgainDisabled = false) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`sl:again:${userId}`)
       .setLabel('Play Again')
       .setStyle(ButtonStyle.Primary)
-      .setDisabled(disabled)
+      .setDisabled(playAgainDisabled),
+    new ButtonBuilder()
+      .setCustomId(`sl:stop:${userId}`)
+      .setLabel('Stop Playing')
+      .setStyle(ButtonStyle.Secondary)
   );
 }
 
-function setupSession(userId, bet, message) {
-  const prev = activeSessions.get(userId);
-  if (prev) clearTimeout(prev.timeout);
+function buildSummaryEmbed(session) {
+  const { roundsPlayed, spent, earned, net } = session;
+  const color  = net > 0 ? '#00CC66' : net < 0 ? '#FF4444' : '#808080';
+  const netStr = net > 0 ? `+${net}` : `${net}`;
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle('🎰 Session Summary')
+    .setDescription(
+      `Rounds played: **${roundsPlayed}**\n` +
+      `Trinkets spent: **${spent} 🪙**\n` +
+      `Trinkets earned: **${earned} 🪙**\n` +
+      `Net: **${netStr} 🪙**`
+    );
+}
 
-  const timeout = setTimeout(async () => {
+function startSessionTimeout(session, userId) {
+  clearTimeout(session.timeout);
+  session.timeout = setTimeout(async () => {
     if (!activeSessions.has(userId)) return;
     activeSessions.delete(userId);
-    try { await message.edit({ components: [playAgainRow(userId, true)] }); } catch { /* ignore */ }
-  }, PLAY_AGAIN_TIMEOUT_MS);
-
-  activeSessions.set(userId, { bet, timeout, message });
+    try { await session.message.edit({ embeds: [buildSummaryEmbed(session)], components: [] }); }
+    catch { /* ignore — message may be deleted */ }
+  }, SESSION_TIMEOUT_MS);
 }
 
 // ─── Shared spin logic ────────────────────────────────────────────────────────
@@ -131,7 +147,9 @@ async function runSpin({ userId, username, bet, message }) {
   await message.edit({ embeds: [spinningEmbed(reels, 2, bet)], components: [] });
 
   await delay(1000);
-  await message.edit({ embeds: [buildResultEmbed(reels, result, bet)], components: [playAgainRow(userId)] });
+  await message.edit({ embeds: [buildResultEmbed(reels, result, bet)], components: [gameButtons(userId)] });
+
+  return netChange;
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -174,11 +192,27 @@ module.exports = {
       return;
     }
 
+    // End any existing session cleanly
+    const prev = activeSessions.get(userId);
+    if (prev) {
+      clearTimeout(prev.timeout);
+      activeSessions.delete(userId);
+      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    }
+
     await interaction.reply({ embeds: [spinningEmbed([], 0, bet)], components: [] });
     const message = await interaction.fetchReply();
 
-    await runSpin({ userId, username, bet, message });
-    setupSession(userId, bet, message);
+    const session = { bet, roundsPlayed: 0, spent: 0, earned: 0, net: 0, timeout: null, message };
+    activeSessions.set(userId, session);
+
+    const netChange = await runSpin({ userId, username, bet, message });
+    session.roundsPlayed++;
+    session.spent += bet;
+    session.earned += Math.max(0, bet + netChange);
+    session.net    += netChange;
+
+    startSessionTimeout(session, userId);
   },
 
   // ─── Button: Play Again ────────────────────────────────────────────────────
@@ -189,10 +223,10 @@ module.exports = {
     const session = activeSessions.get(userId);
     if (!session) return interaction.deferUpdate();
 
-    const { bet } = session;
+    const { bet, message } = session;
     const username = interaction.user.username;
 
-    // Cooldown — leave old button enabled so they can retry
+    // Cooldown — leave buttons enabled so they can retry
     const remaining = checkCooldown(userId, 'slots', SLOTS_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
@@ -201,10 +235,10 @@ module.exports = {
       return;
     }
 
-    // Balance — disable button and show error
+    // Balance — disable Play Again, keep Stop Playing
     const balance = getPlayer(userId).balance ?? 0;
     if (balance < bet) {
-      await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+      await interaction.update({ embeds: message.embeds, components: [gameButtons(userId, true)] });
       const msg = await interaction.followUp({
         content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
         flags: 64,
@@ -213,11 +247,27 @@ module.exports = {
       return;
     }
 
-    // Disable old button, post new spin message
-    await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
-    const newMsg = await interaction.followUp({ embeds: [spinningEmbed([], 0, bet)], components: [] });
+    await interaction.deferUpdate();
+    startSessionTimeout(session, userId);
 
-    await runSpin({ userId, username, bet, message: newMsg });
-    setupSession(userId, bet, newMsg);
+    const netChange = await runSpin({ userId, username, bet, message });
+    session.roundsPlayed++;
+    session.spent += bet;
+    session.earned += Math.max(0, bet + netChange);
+    session.net    += netChange;
+  },
+
+  // ─── Button: Stop Playing ──────────────────────────────────────────────────
+
+  async handleStop(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    clearTimeout(session.timeout);
+    activeSessions.delete(userId);
+
+    await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
   },
 };

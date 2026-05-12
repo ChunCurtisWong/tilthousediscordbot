@@ -8,19 +8,18 @@ const {
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const BJ_COOLDOWN_MS = 5_000;
-const MIN_BET  = 10;
-const MAX_BET  = 500;
-const TIMEOUT_MS          = 5 * 60 * 1000;
-const PLAY_AGAIN_TIMEOUT_MS = 5 * 60 * 1000;
+const BJ_COOLDOWN_MS     = 5_000;
+const MIN_BET            = 10;
+const MAX_BET            = 500;
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 
 const SUITS = ['♠️', '♥️', '♦️', '♣️'];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const FACE  = { A: 11, J: 10, Q: 10, K: 10 };
 
 // In-memory state — cleared on bot restart (intentional)
-const activeGames       = new Map(); // userId → game
-const playAgainSessions = new Map(); // userId → { bet, timeout, message }
+const activeGames    = new Map(); // userId → game
+const activeSessions = new Map(); // userId → session
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 
@@ -59,13 +58,17 @@ function buildButtons(userId, disabled = false) {
   );
 }
 
-function playAgainRow(userId, disabled = false) {
+function gameButtons(userId, playAgainDisabled = false) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`bj:again:${userId}`)
       .setLabel('Play Again')
       .setStyle(ButtonStyle.Primary)
-      .setDisabled(disabled)
+      .setDisabled(playAgainDisabled),
+    new ButtonBuilder()
+      .setCustomId(`bj:stop:${userId}`)
+      .setLabel('Stop Playing')
+      .setStyle(ButtonStyle.Secondary)
   );
 }
 
@@ -116,34 +119,54 @@ function buildFinalEmbed(game, result) {
     );
 }
 
-// ─── Session helpers ──────────────────────────────────────────────────────────
+function buildSummaryEmbed(session) {
+  const { gamesPlayed, spent, earned } = session;
+  const net    = earned - spent;
+  const color  = net > 0 ? '#00CC66' : net < 0 ? '#FF4444' : '#808080';
+  const netStr = net > 0 ? `+${net}` : `${net}`;
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle('🃏 Session Summary')
+    .setDescription(
+      `Games played: **${gamesPlayed}**\n` +
+      `Trinkets spent: **${spent} 🪙**\n` +
+      `Trinkets earned: **${earned} 🪙**\n` +
+      `Net: **${netStr} 🪙**`
+    );
+}
 
-function setupPlayAgain(userId, bet, message) {
-  const prev = playAgainSessions.get(userId);
-  if (prev) clearTimeout(prev.timeout);
+// ─── Session timeout ──────────────────────────────────────────────────────────
 
-  const timeout = setTimeout(async () => {
-    if (!playAgainSessions.has(userId)) return;
-    playAgainSessions.delete(userId);
-    try { await message.edit({ components: [playAgainRow(userId, true)] }); } catch { /* ignore */ }
-  }, PLAY_AGAIN_TIMEOUT_MS);
-
-  playAgainSessions.set(userId, { bet, timeout, message });
+function startSessionTimeout(session, userId) {
+  clearTimeout(session.timeout);
+  session.timeout = setTimeout(async () => {
+    if (!activeSessions.has(userId)) return;
+    activeSessions.delete(userId);
+    activeGames.delete(userId); // cancel any in-progress game (bet never deducted)
+    try { await session.message.edit({ embeds: [buildSummaryEmbed(session)], components: [] }); }
+    catch { /* ignore */ }
+  }, SESSION_TIMEOUT_MS);
 }
 
 // ─── Game logic ───────────────────────────────────────────────────────────────
 
 async function resolveGame(game, result, interaction) {
-  clearTimeout(game.timeout);
   activeGames.delete(game.userId);
 
   let netChange = 0;
-  if (result === 'blackjack')                        netChange =  Math.floor(game.bet * 1.5);
-  else if (result === 'win')                         netChange =  Math.floor(game.bet * 0.8);
-  else if (result === 'bust' || result === 'lose')   netChange = -game.bet;
+  if (result === 'blackjack')                      netChange =  Math.floor(game.bet * 1.5);
+  else if (result === 'win')                       netChange =  Math.floor(game.bet * 0.8);
+  else if (result === 'bust' || result === 'lose') netChange = -game.bet;
 
   if (netChange !== 0) await addTrinkets(game.userId, netChange, game.username);
   await setCooldown(game.userId, 'blackjack');
+
+  const session = activeSessions.get(game.userId);
+  if (session) {
+    session.gamesPlayed++;
+    session.spent  += game.bet;
+    session.earned += Math.max(0, game.bet + netChange);
+  }
 
   logger.info('Blackjack resolved', {
     userId: game.userId, bet: game.bet, result, netChange,
@@ -151,74 +174,48 @@ async function resolveGame(game, result, interaction) {
     dealerValue: handValue(game.dealerHand),
   });
 
-  const msg = await interaction.editReply({
+  await interaction.editReply({
     embeds: [buildFinalEmbed(game, result)],
-    components: [playAgainRow(game.userId)],
+    components: session ? [gameButtons(game.userId)] : [],
   });
-  setupPlayAgain(game.userId, game.bet, msg);
 }
 
 async function runDealerAndResolve(game, interaction) {
   while (handValue(game.dealerHand) < 17) game.dealerHand.push(drawCard());
-
   const pv = handValue(game.playerHand);
   const dv = handValue(game.dealerHand);
-
   let result;
   if (dv > 21 || pv > dv) result = 'win';
   else if (pv === dv)      result = 'tie';
   else                     result = 'lose';
-
   await resolveGame(game, result, interaction);
 }
 
-// ─── Shared game-start logic ──────────────────────────────────────────────────
-
-async function startGame({ userId, username, bet, sendGame }) {
+// Starts a new game on the session message.
+// sendGame(opts) → Promise<Message> handles the first message send.
+async function beginGame(userId, username, bet, session, sendGame) {
   const playerHand = [drawCard(), drawCard()];
   const dealerHand = [drawCard(), drawCard()];
 
-  // Natural blackjack — resolve immediately
   if (handValue(playerHand) === 21) {
     const payout = Math.floor(bet * 1.5);
     await addTrinkets(userId, payout, username);
     await setCooldown(userId, 'blackjack');
     logger.info('Blackjack — natural blackjack', { userId, bet, payout });
+
+    session.gamesPlayed++;
+    session.spent  += bet;
+    session.earned += bet + payout;
+
     const quickGame = { userId, username, bet, playerHand, dealerHand };
-    const msg = await sendGame({
-      embeds: [buildFinalEmbed(quickGame, 'blackjack')],
-      components: [playAgainRow(userId)],
-    });
-    setupPlayAgain(userId, bet, msg);
+    await sendGame({ embeds: [buildFinalEmbed(quickGame, 'blackjack')], components: [gameButtons(userId)] });
     return;
   }
 
-  const game = { userId, username, bet, playerHand, dealerHand, timeout: null, message: null };
+  const game = { userId, username, bet, playerHand, dealerHand };
   activeGames.set(userId, game);
 
-  game.message = await sendGame({
-    embeds: [buildGameEmbed(game)],
-    components: [buildButtons(userId)],
-  });
-
-  // 5-minute idle timeout — returns bet, disables buttons
-  game.timeout = setTimeout(async () => {
-    if (!activeGames.has(userId)) return;
-    activeGames.delete(userId);
-    logger.info('Blackjack timeout — bet returned', { userId, bet });
-    try {
-      await game.message.edit({
-        embeds: [buildGameEmbed(game)],
-        components: [buildButtons(userId, true)],
-      });
-      const expMsg = await game.message.channel.send(
-        `⏰ <@${userId}>'s blackjack session expired — bet returned.`
-      );
-      setTimeout(() => expMsg.delete().catch(() => {}), 15_000);
-    } catch (err) {
-      logger.error('Blackjack timeout cleanup failed', { userId, error: err.message });
-    }
-  }, TIMEOUT_MS);
+  await sendGame({ embeds: [buildGameEmbed(game)], components: [buildButtons(userId)] });
 }
 
 // ─── Command module ───────────────────────────────────────────────────────────
@@ -271,15 +268,23 @@ module.exports = {
       return;
     }
 
-    await startGame({
-      userId,
-      username,
-      bet,
-      sendGame: async opts => {
-        await interaction.reply(opts);
-        return interaction.fetchReply();
-      },
+    // End any existing session cleanly
+    const prev = activeSessions.get(userId);
+    if (prev) {
+      clearTimeout(prev.timeout);
+      activeSessions.delete(userId);
+      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    }
+
+    const session = { bet, gamesPlayed: 0, spent: 0, earned: 0, net: 0, timeout: null, message: null };
+    activeSessions.set(userId, session);
+
+    await beginGame(userId, username, bet, session, async opts => {
+      await interaction.reply(opts);
+      session.message = await interaction.fetchReply();
     });
+
+    startSessionTimeout(session, userId);
   },
 
   // ─── Button: Hit ───────────────────────────────────────────────────
@@ -295,6 +300,9 @@ module.exports = {
     }
 
     await interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (session) startSessionTimeout(session, userId);
 
     game.playerHand.push(drawCard());
     const pv = handValue(game.playerHand);
@@ -324,6 +332,10 @@ module.exports = {
     }
 
     await interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (session) startSessionTimeout(session, userId);
+
     await runDealerAndResolve(game, interaction);
   },
 
@@ -332,13 +344,15 @@ module.exports = {
   async handlePlayAgain(interaction, userId) {
     if (interaction.user.id !== userId) return interaction.deferUpdate();
 
-    const session = playAgainSessions.get(userId);
+    const session = activeSessions.get(userId);
     if (!session) return interaction.deferUpdate();
 
-    const { bet } = session;
+    if (activeGames.has(userId)) return interaction.deferUpdate();
+
+    const { bet, message } = session;
     const username = interaction.user.username;
 
-    // Cooldown — leave old button enabled so they can retry
+    // Cooldown — leave buttons enabled
     const remaining = checkCooldown(userId, 'blackjack', BJ_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
@@ -347,20 +361,10 @@ module.exports = {
       return;
     }
 
-    // One game at a time — leave old button enabled
-    if (activeGames.has(userId)) {
-      await interaction.reply({
-        content: '❌ You already have an active blackjack game. Finish it first!',
-        flags: 64,
-      });
-      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
-      return;
-    }
-
-    // Balance — disable button and show error
+    // Balance — disable Play Again, keep Stop Playing
     const balance = getPlayer(userId).balance ?? 0;
     if (balance < bet) {
-      await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+      await interaction.update({ embeds: message.embeds, components: [gameButtons(userId, true)] });
       const msg = await interaction.followUp({
         content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
         flags: 64,
@@ -369,16 +373,24 @@ module.exports = {
       return;
     }
 
-    // Disable old button, start new game as a new message
-    clearTimeout(session.timeout);
-    playAgainSessions.delete(userId);
-    await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+    await interaction.deferUpdate();
+    startSessionTimeout(session, userId);
 
-    await startGame({
-      userId,
-      username,
-      bet,
-      sendGame: opts => interaction.followUp(opts),
-    });
+    await beginGame(userId, username, bet, session, opts => message.edit(opts));
+  },
+
+  // ─── Button: Stop Playing ──────────────────────────────────────────
+
+  async handleStop(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    clearTimeout(session.timeout);
+    activeSessions.delete(userId);
+    activeGames.delete(userId); // cancel any in-progress game
+
+    await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
   },
 };

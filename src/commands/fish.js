@@ -8,12 +8,12 @@ const {
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
 
-const FISH_COOLDOWN_MS = 5_000;
-const RECAST_TIMEOUT_MS = 5 * 60 * 1000;
+const FISH_COOLDOWN_MS   = 5_000;
+const SESSION_TIMEOUT_MS = 5 * 60 * 1000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// In-memory state — cleared on bot restart (intentional)
-const activeSessions = new Map(); // userId → { cast, castKey, timeout, message }
+// userId → session object (exported for /th-icebox)
+const activeSessions = new Map();
 
 // ─── Data tables ──────────────────────────────────────────────────────────────
 
@@ -102,6 +102,8 @@ const ITEM_MESSAGES = {
   ],
 };
 
+const CAST_ORDER = ['standard', 'enhanced', 'premium'];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function pick(arr) {
@@ -120,9 +122,9 @@ function rollWeighted(table) {
 
 // ─── Embed builders ───────────────────────────────────────────────────────────
 
-const WAVE      = '🌊≋≋≋≋≋≋≋≋≋≋';
-const ROD_DEEP  = `🎣\n┃\n┃\n┃\n${WAVE}`;
-const ROD_NEAR  = `🎣\n┃\n${WAVE}`;
+const WAVE     = '🌊≋≋≋≋≋≋≋≋≋≋';
+const ROD_DEEP = `🎣\n┃\n┃\n┃\n${WAVE}`;
+const ROD_NEAR = `🎣\n┃\n${WAVE}`;
 
 function phaseEmbed(phase, username, cast) {
   let desc;
@@ -173,38 +175,85 @@ function buildResultEmbed(cast, result, username) {
     .addFields({ name: castLine, value: rewardLine });
 }
 
-function recastRow(userId, disabled = false) {
+function gameButtons(userId, recastDisabled = false) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`fc:recast:${userId}`)
       .setLabel('Recast')
       .setStyle(ButtonStyle.Primary)
-      .setDisabled(disabled)
+      .setDisabled(recastDisabled),
+    new ButtonBuilder()
+      .setCustomId(`fc:home:${userId}`)
+      .setLabel('Go Home')
+      .setStyle(ButtonStyle.Secondary)
   );
 }
 
-function setupSession(userId, cast, castKey, message) {
-  const prev = activeSessions.get(userId);
-  if (prev) clearTimeout(prev.timeout);
+function buildSummaryEmbed(session) {
+  const { castsByType, fishLog, spent, earned } = session;
+  const net    = earned - spent;
+  const color  = net > 0 ? '#00CC66' : net < 0 ? '#FF4444' : '#808080';
+  const netStr = net > 0 ? `+${net}` : `${net}`;
 
-  const timeout = setTimeout(async () => {
+  const castLines = [];
+  for (const key of CAST_ORDER) {
+    const count = castsByType[key] ?? 0;
+    if (count > 0) {
+      const totalCost = count * CASTS[key].cost;
+      castLines.push(`• ${CASTS[key].tier} ×${count} (-${totalCost} 🪙)`);
+    }
+  }
+
+  const fishLines = [];
+  for (const [name, entry] of fishLog) {
+    fishLines.push(`${entry.emoji} ${name} ×${entry.count}`);
+  }
+
+  let desc = '';
+  if (castLines.length > 0) desc += `**Casts by type:**\n${castLines.join('\n')}\n\n`;
+  if (fishLines.length > 0) desc += `**Fish caught:**\n${fishLines.join('\n')}\n\n`;
+  desc += `Trinkets spent: **${spent} 🪙**\nTrinkets earned: **${earned} 🪙**\nNet: **${netStr} 🪙**`;
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setTitle('🎣 Session Summary')
+    .setDescription(desc);
+}
+
+function startSessionTimeout(session, userId) {
+  clearTimeout(session.timeout);
+  session.timeout = setTimeout(async () => {
     if (!activeSessions.has(userId)) return;
     activeSessions.delete(userId);
-    try { await message.edit({ components: [recastRow(userId, true)] }); } catch { /* ignore */ }
-  }, RECAST_TIMEOUT_MS);
+    try { await session.message.edit({ embeds: [buildSummaryEmbed(session)], components: [] }); }
+    catch { /* ignore */ }
+  }, SESSION_TIMEOUT_MS);
+}
 
-  activeSessions.set(userId, { cast, castKey, timeout, message });
+function newSession(cast, castKey, message) {
+  return {
+    cast,
+    castKey,
+    castsByType: { standard: 0, enhanced: 0, premium: 0 },
+    fishLog: new Map(), // fishName → { emoji, count, totalReward }
+    spent: 0,
+    earned: 0,
+    timeout: null,
+    message,
+  };
 }
 
 // ─── Shared cast logic ────────────────────────────────────────────────────────
 
-async function runCast({ userId, username, cast, castKey, message }) {
+async function runCast({ userId, username, cast, castKey, message, session }) {
   // Phase 1
   await message.edit({ embeds: [phaseEmbed(1, username, cast)], components: [] });
 
-  // Deduct cost and set cooldown immediately
+  // Deduct cost, set cooldown, update session spend
   await addTrinkets(userId, -cast.cost, username);
   await setCooldown(userId, 'fish');
+  session.castsByType[castKey] = (session.castsByType[castKey] ?? 0) + 1;
+  session.spent += cast.cost;
 
   // Determine outcome
   let result;
@@ -212,10 +261,23 @@ async function runCast({ userId, username, cast, castKey, message }) {
     const item = pick(cast.items);
     const msg  = pick(ITEM_MESSAGES[item.name]);
     await addTrinkets(userId, -item.cost);
+    session.spent += item.cost;
     result = { type: 'loss', item, msg };
   } else {
     const fish = rollWeighted(cast.fish);
     if (fish.reward !== 0) await addTrinkets(userId, fish.reward);
+
+    // Update fish log
+    if (!session.fishLog.has(fish.name)) {
+      session.fishLog.set(fish.name, { emoji: fish.emoji, count: 0, totalReward: 0 });
+    }
+    const entry = session.fishLog.get(fish.name);
+    entry.count++;
+    entry.totalReward += fish.reward;
+
+    if (fish.reward > 0)      session.earned += fish.reward;
+    else if (fish.reward < 0) session.spent  += Math.abs(fish.reward);
+
     result = { type: 'catch', fish };
   }
 
@@ -227,17 +289,15 @@ async function runCast({ userId, username, cast, castKey, message }) {
     reward: result.type === 'loss' ? -result.item.cost : result.fish.reward,
   });
 
-  // Phase 2
+  // Phases 2 → 3 → result
   await delay(1500);
   await message.edit({ embeds: [phaseEmbed(2, username, cast)], components: [] });
 
-  // Phase 3
   await delay(1500);
   await message.edit({ embeds: [phaseEmbed(3, username, cast)], components: [] });
 
-  // Final result with Recast button
   await delay(1000);
-  await message.edit({ embeds: [buildResultEmbed(cast, result, username)], components: [recastRow(userId)] });
+  await message.edit({ embeds: [buildResultEmbed(cast, result, username)], components: [gameButtons(userId)] });
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -284,11 +344,22 @@ module.exports = {
       return;
     }
 
+    // End any existing session cleanly
+    const prev = activeSessions.get(userId);
+    if (prev) {
+      clearTimeout(prev.timeout);
+      activeSessions.delete(userId);
+      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    }
+
     await interaction.reply({ embeds: [phaseEmbed(1, username, cast)], components: [] });
     const message = await interaction.fetchReply();
 
-    await runCast({ userId, username, cast, castKey, message });
-    setupSession(userId, cast, castKey, message);
+    const session = newSession(cast, castKey, message);
+    activeSessions.set(userId, session);
+
+    await runCast({ userId, username, cast, castKey, message, session });
+    startSessionTimeout(session, userId);
   },
 
   // ─── Button: Recast ────────────────────────────────────────────────────────
@@ -299,10 +370,10 @@ module.exports = {
     const session = activeSessions.get(userId);
     if (!session) return interaction.deferUpdate();
 
-    const { cast, castKey } = session;
+    const { cast, castKey, message } = session;
     const username = interaction.user.username;
 
-    // Cooldown — leave old button enabled so they can retry
+    // Cooldown — leave buttons enabled
     const remaining = checkCooldown(userId, 'fish', FISH_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
@@ -311,10 +382,10 @@ module.exports = {
       return;
     }
 
-    // Balance — disable button and show error
+    // Balance — disable Recast, keep Go Home
     const balance = getPlayer(userId).balance ?? 0;
     if (balance < cast.cost) {
-      await interaction.update({ embeds: interaction.message.embeds, components: [recastRow(userId, true)] });
+      await interaction.update({ embeds: message.embeds, components: [gameButtons(userId, true)] });
       const msg = await interaction.followUp({
         content: `❌ You don't have enough Trinkets to cast.\nYour balance: **${balance} 🪙**`,
         flags: 64,
@@ -323,11 +394,26 @@ module.exports = {
       return;
     }
 
-    // Disable old button, post new cast message
-    await interaction.update({ embeds: interaction.message.embeds, components: [recastRow(userId, true)] });
-    const newMsg = await interaction.followUp({ embeds: [phaseEmbed(1, username, cast)], components: [] });
+    await interaction.deferUpdate();
+    startSessionTimeout(session, userId);
 
-    await runCast({ userId, username, cast, castKey, message: newMsg });
-    setupSession(userId, cast, castKey, newMsg);
+    await runCast({ userId, username, cast, castKey, message, session });
   },
+
+  // ─── Button: Go Home ───────────────────────────────────────────────────────
+
+  async handleGoHome(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    clearTimeout(session.timeout);
+    activeSessions.delete(userId);
+
+    await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
+  },
+
+  // Accessor for /th-icebox
+  getSession: userId => activeSessions.get(userId),
 };

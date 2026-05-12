@@ -33,7 +33,8 @@ module.exports = {
         '`/th-roll` — Roll a dice (default 6 sides)\n' +
         '`/th-slots amount` — Spin the slot machine, bet 10–500 Trinkets\n' +
         '`/th-blackjack amount` — Play blackjack, bet 10–500 Trinkets\n' +
-        '`/th-fish cast` — Go fishing and earn Trinkets (10s cooldown)\n\n' +
+        '`/th-fish cast` — Go fishing and earn Trinkets (5s cooldown)\n' +
+        '`/th-icebox` — View your current fishing session catch log\n\n' +
         '**🌐 Server**\n' +
         '`/th-roles` — React to assign yourself a game role\n\n' +
         '**🪙 Trinkets**\n' +
