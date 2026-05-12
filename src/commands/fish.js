@@ -196,7 +196,7 @@ function gameButtons(userId, recastDisabled = false) {
 }
 
 function buildSummaryEmbed(session) {
-  const { castsByType, fishLog, spent, earned } = session;
+  const { castsByType, itemLosses, fishLog, spent, earned } = session;
   const net    = earned - spent;
   const color  = net > 0 ? '#00CC66' : net < 0 ? '#FF4444' : '#808080';
   const netStr = net > 0 ? `+${net}` : `${net}`;
@@ -217,6 +217,10 @@ function buildSummaryEmbed(session) {
 
   let desc = '';
   if (castLines.length > 0) desc += `**Casts by type:**\n${castLines.join('\n')}\n\n`;
+  if (itemLosses.length > 0) {
+    const lossLines = itemLosses.map(l => `• ${l.emoji} ${l.msg} — **-${l.cost} 🪙**`);
+    desc += `**Item Losses:**\n${lossLines.join('\n')}\n\n`;
+  }
   if (fishLines.length > 0) desc += `**Fish caught:**\n${fishLines.join('\n')}\n\n`;
   desc += `Trinkets spent: **${spent} 🪙**\nTrinkets earned: **${earned} 🪙**\nNet: **${netStr} 🪙**`;
 
@@ -241,7 +245,8 @@ function newSession(cast, castKey, message) {
     cast,
     castKey,
     castsByType: { standard: 0, enhanced: 0, premium: 0 },
-    fishLog: new Map(), // fishName → { emoji, count, totalReward }
+    fishLog: new Map(),   // fishName → { emoji, count, totalReward }
+    itemLosses: [],       // { emoji, msg, cost }
     spent: 0,
     earned: 0,
     timeout: null,
@@ -268,6 +273,7 @@ async function runCast({ userId, username, cast, castKey, message, session }) {
     const msg  = pick(ITEM_MESSAGES[item.name]);
     await addTrinkets(userId, -item.cost);
     session.spent += item.cost;
+    session.itemLosses.push({ emoji: item.emoji, msg, cost: item.cost });
     result = { type: 'loss', item, msg };
   } else {
     const fish = rollWeighted(cast.fish);
