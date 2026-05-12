@@ -1,6 +1,68 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} = require('discord.js');
 const { getPlayer, addTrinkets, checkCooldown, setCooldown } = require('../utils/trinkets');
 const logger = require('../utils/logger');
+
+const FLIP_AGAIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+// In-memory state — cleared on bot restart (intentional)
+// bet: number | null (null = free flip), choice: 'heads' | 'tails' | null
+const flipAgainSessions = new Map(); // userId → { bet, choice, timeout, message }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function flipAgainRow(userId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`cf:again:${userId}`)
+      .setLabel('Flip Again')
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled)
+  );
+}
+
+function setupSession(userId, bet, choice, message) {
+  const prev = flipAgainSessions.get(userId);
+  if (prev) clearTimeout(prev.timeout);
+
+  const timeout = setTimeout(async () => {
+    if (!flipAgainSessions.has(userId)) return;
+    flipAgainSessions.delete(userId);
+    try { await message.edit({ components: [flipAgainRow(userId, true)] }); } catch { /* ignore */ }
+  }, FLIP_AGAIN_TIMEOUT_MS);
+
+  flipAgainSessions.set(userId, { bet, choice, timeout, message });
+}
+
+function buildFlipEmbed(userId, bet, choice, isHeads, won) {
+  const coinEmoji   = isHeads ? '🪙' : '🌑';
+  const resultLabel = isHeads ? 'Heads' : 'Tails';
+
+  if (bet === null) {
+    return new EmbedBuilder()
+      .setColor(isHeads ? '#FFD700' : '#C0C0C0')
+      .setTitle(`${coinEmoji} ${resultLabel}!`)
+      .setDescription(`The coin landed on **${resultLabel}**.`)
+      .setTimestamp();
+  }
+
+  let description = `${coinEmoji} The coin landed on **${resultLabel}**!\n\n`;
+  if (choice) description += `You picked **${choice === 'heads' ? 'Heads' : 'Tails'}** — `;
+  description += won ? `**<@${userId}> won ${bet} 🪙!**` : `**<@${userId}> lost ${bet} 🪙!**`;
+
+  return new EmbedBuilder()
+    .setColor(won ? '#FFD700' : '#FF4444')
+    .setTitle(won ? '🎉 Winner!' : '💀 Better luck next time!')
+    .setDescription(description)
+    .setTimestamp();
+}
+
+// ─── Command ──────────────────────────────────────────────────────────────────
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -19,31 +81,27 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const userId   = interaction.user.id;
-    const username = interaction.user.username;
+    const userId    = interaction.user.id;
+    const username  = interaction.user.username;
     const amountStr = interaction.options.getString('amount');
-    const choice    = interaction.options.getString('choice'); // 'heads' | 'tails' | null
+    const choice    = interaction.options.getString('choice');
     const betting   = amountStr !== null;
 
-    // ── Flip the coin ─────────────────────────────────────────────────
     const result  = Math.random() < 0.5 ? 'heads' : 'tails';
     const isHeads = result === 'heads';
-    const coinEmoji   = isHeads ? '🪙' : '🌑';
-    const resultLabel = isHeads ? 'Heads' : 'Tails';
 
-    // ── Free flip (no bet) ────────────────────────────────────────────
+    // ── Free flip ─────────────────────────────────────────────────────────────
     if (!betting) {
-      const embed = new EmbedBuilder()
-        .setColor(isHeads ? '#FFD700' : '#C0C0C0')
-        .setTitle(`${coinEmoji} ${resultLabel}!`)
-        .setDescription(`The coin landed on **${resultLabel}**.`)
-        .setTimestamp();
-      return interaction.reply({ embeds: [embed] });
+      const embed = buildFlipEmbed(userId, null, null, isHeads, null);
+      await interaction.reply({ embeds: [embed], components: [flipAgainRow(userId)] });
+      const message = await interaction.fetchReply();
+      setupSession(userId, null, null, message);
+      return;
     }
 
-    // ── Betting flow ──────────────────────────────────────────────────
+    // ── Betting flow ──────────────────────────────────────────────────────────
 
-    // Cooldown check
+    // Cooldown
     const remaining = checkCooldown(userId, 'coinflip', 5_000);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
@@ -53,8 +111,7 @@ module.exports = {
       });
     }
 
-    const player  = getPlayer(userId);
-    const balance = player.balance ?? 0;
+    const balance = getPlayer(userId).balance ?? 0;
 
     // Parse and validate bet
     let bet;
@@ -79,35 +136,87 @@ module.exports = {
       return;
     }
 
-    // Determine win/loss: with choice → match wins; without → heads wins
     const won = choice !== null ? result === choice : isHeads;
 
-    // Apply and set cooldown
     const newBalance = await addTrinkets(userId, won ? bet : -bet, username);
     await setCooldown(userId, 'coinflip');
-
     logger.info('Coinflip bet result', { userId, bet, choice, result, won, newBalance });
 
-    // Public embed — result and win/loss, no balance
-    let description = `${coinEmoji} The coin landed on **${resultLabel}**!\n\n`;
-    if (choice) {
-      description += `You picked **${choice === 'heads' ? 'Heads' : 'Tails'}** — `;
-    }
-    description += won ? `**<@${userId}> won ${bet} 🪙!**` : `**<@${userId}> lost ${bet} 🪙!**`;
+    const embed = buildFlipEmbed(userId, bet, choice, isHeads, won);
+    await interaction.reply({ embeds: [embed], components: [flipAgainRow(userId)] });
+    const message = await interaction.fetchReply();
+    setupSession(userId, bet, choice, message);
 
-    const resultEmbed = new EmbedBuilder()
-      .setColor(won ? '#FFD700' : '#FF4444')
-      .setTitle(won ? '🎉 Winner!' : '💀 Better luck next time!')
-      .setDescription(description)
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [resultEmbed] });
-
-    // Ephemeral balance reveal — only visible to the player (auto-deletes after 15s)
-    const balMsg = await interaction.followUp({
-      content: `Your new balance: **${newBalance} 🪙**`,
-      flags: 64,
-    });
+    // Ephemeral balance reveal — auto-deletes after 15s
+    const balMsg = await interaction.followUp({ content: `Your new balance: **${newBalance} 🪙**`, flags: 64 });
     setTimeout(() => balMsg.delete().catch(() => {}), 15_000);
+  },
+
+  // ─── Button: Flip Again ────────────────────────────────────────────────────
+
+  async handleFlipAgain(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = flipAgainSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    const { bet, choice } = session;
+    const username = interaction.user.username;
+
+    // Betting-only checks
+    if (bet !== null) {
+      // Cooldown — leave old button enabled
+      const remaining = checkCooldown(userId, 'coinflip', 5_000);
+      if (remaining !== null) {
+        const secs = Math.ceil(remaining / 1000);
+        await interaction.reply({ content: `⏳ Wait **${secs}s** before placing another bet.`, flags: 64 });
+        setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+        return;
+      }
+
+      // Balance — disable button and show error
+      const balance = getPlayer(userId).balance ?? 0;
+      if (balance < bet) {
+        await interaction.update({ embeds: interaction.message.embeds, components: [flipAgainRow(userId, true)] });
+        const msg = await interaction.followUp({
+          content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
+          flags: 64,
+        });
+        setTimeout(() => msg.delete().catch(() => {}), 15_000);
+        return;
+      }
+    }
+
+    // Disable Flip Again on old message, post result as new message
+    await interaction.update({ embeds: interaction.message.embeds, components: [flipAgainRow(userId, true)] });
+
+    const result  = Math.random() < 0.5 ? 'heads' : 'tails';
+    const isHeads = result === 'heads';
+
+    let newMsg;
+    if (bet === null) {
+      // Free flip
+      newMsg = await interaction.followUp({
+        embeds: [buildFlipEmbed(userId, null, null, isHeads, null)],
+        components: [flipAgainRow(userId)],
+      });
+    } else {
+      // Betting flip
+      const won = choice !== null ? result === choice : isHeads;
+      const newBalance = await addTrinkets(userId, won ? bet : -bet, username);
+      await setCooldown(userId, 'coinflip');
+      logger.info('Coinflip bet result (flip again)', { userId, bet, choice, result, won, newBalance });
+
+      newMsg = await interaction.followUp({
+        embeds: [buildFlipEmbed(userId, bet, choice, isHeads, won)],
+        components: [flipAgainRow(userId)],
+      });
+
+      // Ephemeral balance reveal — auto-deletes after 15s
+      const balMsg = await interaction.followUp({ content: `Your new balance: **${newBalance} 🪙**`, flags: 64 });
+      setTimeout(() => balMsg.delete().catch(() => {}), 15_000);
+    }
+
+    setupSession(userId, bet, choice, newMsg);
   },
 };

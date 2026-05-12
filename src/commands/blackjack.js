@@ -11,14 +11,16 @@ const logger = require('../utils/logger');
 const BJ_COOLDOWN_MS = 5_000;
 const MIN_BET  = 10;
 const MAX_BET  = 500;
-const TIMEOUT_MS = 5 * 60 * 1000;
+const TIMEOUT_MS          = 5 * 60 * 1000;
+const PLAY_AGAIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 const SUITS = ['♠️', '♥️', '♦️', '♣️'];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const FACE  = { A: 11, J: 10, Q: 10, K: 10 };
 
-// In-memory game state — cleared on bot restart (intentional)
-const activeGames = new Map(); // userId → game
+// In-memory state — cleared on bot restart (intentional)
+const activeGames       = new Map(); // userId → game
+const playAgainSessions = new Map(); // userId → { bet, timeout, message }
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 
@@ -53,6 +55,16 @@ function buildButtons(userId, disabled = false) {
       .setCustomId(`bj:stand:${userId}`)
       .setLabel('Stand')
       .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled)
+  );
+}
+
+function playAgainRow(userId, disabled = false) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`bj:again:${userId}`)
+      .setLabel('Play Again')
+      .setStyle(ButtonStyle.Primary)
       .setDisabled(disabled)
   );
 }
@@ -104,6 +116,21 @@ function buildFinalEmbed(game, result) {
     );
 }
 
+// ─── Session helpers ──────────────────────────────────────────────────────────
+
+function setupPlayAgain(userId, bet, message) {
+  const prev = playAgainSessions.get(userId);
+  if (prev) clearTimeout(prev.timeout);
+
+  const timeout = setTimeout(async () => {
+    if (!playAgainSessions.has(userId)) return;
+    playAgainSessions.delete(userId);
+    try { await message.edit({ components: [playAgainRow(userId, true)] }); } catch { /* ignore */ }
+  }, PLAY_AGAIN_TIMEOUT_MS);
+
+  playAgainSessions.set(userId, { bet, timeout, message });
+}
+
 // ─── Game logic ───────────────────────────────────────────────────────────────
 
 async function resolveGame(game, result, interaction) {
@@ -111,9 +138,9 @@ async function resolveGame(game, result, interaction) {
   activeGames.delete(game.userId);
 
   let netChange = 0;
-  if (result === 'blackjack')               netChange =  Math.floor(game.bet * 1.5);
-  else if (result === 'win')                netChange =  Math.floor(game.bet * 0.8);
-  else if (result === 'bust' || result === 'lose') netChange = -game.bet;
+  if (result === 'blackjack')                        netChange =  Math.floor(game.bet * 1.5);
+  else if (result === 'win')                         netChange =  Math.floor(game.bet * 0.8);
+  else if (result === 'bust' || result === 'lose')   netChange = -game.bet;
 
   if (netChange !== 0) await addTrinkets(game.userId, netChange, game.username);
   await setCooldown(game.userId, 'blackjack');
@@ -124,7 +151,11 @@ async function resolveGame(game, result, interaction) {
     dealerValue: handValue(game.dealerHand),
   });
 
-  await interaction.editReply({ embeds: [buildFinalEmbed(game, result)], components: [] });
+  const msg = await interaction.editReply({
+    embeds: [buildFinalEmbed(game, result)],
+    components: [playAgainRow(game.userId)],
+  });
+  setupPlayAgain(game.userId, game.bet, msg);
 }
 
 async function runDealerAndResolve(game, interaction) {
@@ -139,6 +170,55 @@ async function runDealerAndResolve(game, interaction) {
   else                     result = 'lose';
 
   await resolveGame(game, result, interaction);
+}
+
+// ─── Shared game-start logic ──────────────────────────────────────────────────
+
+async function startGame({ userId, username, bet, sendGame }) {
+  const playerHand = [drawCard(), drawCard()];
+  const dealerHand = [drawCard(), drawCard()];
+
+  // Natural blackjack — resolve immediately
+  if (handValue(playerHand) === 21) {
+    const payout = Math.floor(bet * 1.5);
+    await addTrinkets(userId, payout, username);
+    await setCooldown(userId, 'blackjack');
+    logger.info('Blackjack — natural blackjack', { userId, bet, payout });
+    const quickGame = { userId, username, bet, playerHand, dealerHand };
+    const msg = await sendGame({
+      embeds: [buildFinalEmbed(quickGame, 'blackjack')],
+      components: [playAgainRow(userId)],
+    });
+    setupPlayAgain(userId, bet, msg);
+    return;
+  }
+
+  const game = { userId, username, bet, playerHand, dealerHand, timeout: null, message: null };
+  activeGames.set(userId, game);
+
+  game.message = await sendGame({
+    embeds: [buildGameEmbed(game)],
+    components: [buildButtons(userId)],
+  });
+
+  // 5-minute idle timeout — returns bet, disables buttons
+  game.timeout = setTimeout(async () => {
+    if (!activeGames.has(userId)) return;
+    activeGames.delete(userId);
+    logger.info('Blackjack timeout — bet returned', { userId, bet });
+    try {
+      await game.message.edit({
+        embeds: [buildGameEmbed(game)],
+        components: [buildButtons(userId, true)],
+      });
+      const expMsg = await game.message.channel.send(
+        `⏰ <@${userId}>'s blackjack session expired — bet returned.`
+      );
+      setTimeout(() => expMsg.delete().catch(() => {}), 15_000);
+    } catch (err) {
+      logger.error('Blackjack timeout cleanup failed', { userId, error: err.message });
+    }
+  }, TIMEOUT_MS);
 }
 
 // ─── Command module ───────────────────────────────────────────────────────────
@@ -191,46 +271,15 @@ module.exports = {
       return;
     }
 
-    // Deal initial hands
-    const playerHand = [drawCard(), drawCard()];
-    const dealerHand = [drawCard(), drawCard()];
-
-    // Natural blackjack — resolve immediately (no buttons)
-    if (handValue(playerHand) === 21) {
-      const payout = Math.floor(bet * 1.5);
-      await addTrinkets(userId, payout, username);
-      await setCooldown(userId, 'blackjack');
-      logger.info('Blackjack — natural blackjack', { userId, bet, payout });
-      const quickGame = { userId, username, bet, playerHand, dealerHand };
-      await interaction.reply({ embeds: [buildFinalEmbed(quickGame, 'blackjack')], components: [] });
-      return;
-    }
-
-    // Start game
-    const game = { userId, username, bet, playerHand, dealerHand, timeout: null, message: null };
-    activeGames.set(userId, game);
-
-    await interaction.reply({ embeds: [buildGameEmbed(game)], components: [buildButtons(userId)] });
-    game.message = await interaction.fetchReply();
-
-    // 5-minute idle timeout — returns bet, disables buttons
-    game.timeout = setTimeout(async () => {
-      if (!activeGames.has(userId)) return;
-      activeGames.delete(userId);
-      logger.info('Blackjack timeout — bet returned', { userId, bet });
-      try {
-        await game.message.edit({
-          embeds: [buildGameEmbed(game)],
-          components: [buildButtons(userId, true)],
-        });
-        const expMsg = await game.message.channel.send(
-          `⏰ <@${userId}>'s blackjack session expired — bet returned.`
-        );
-        setTimeout(() => expMsg.delete().catch(() => {}), 15_000);
-      } catch (err) {
-        logger.error('Blackjack timeout cleanup failed', { userId, error: err.message });
-      }
-    }, TIMEOUT_MS);
+    await startGame({
+      userId,
+      username,
+      bet,
+      sendGame: async opts => {
+        await interaction.reply(opts);
+        return interaction.fetchReply();
+      },
+    });
   },
 
   // ─── Button: Hit ───────────────────────────────────────────────────
@@ -276,5 +325,60 @@ module.exports = {
 
     await interaction.deferUpdate();
     await runDealerAndResolve(game, interaction);
+  },
+
+  // ─── Button: Play Again ────────────────────────────────────────────
+
+  async handlePlayAgain(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = playAgainSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    const { bet } = session;
+    const username = interaction.user.username;
+
+    // Cooldown — leave old button enabled so they can retry
+    const remaining = checkCooldown(userId, 'blackjack', BJ_COOLDOWN_MS);
+    if (remaining !== null) {
+      const secs = Math.ceil(remaining / 1000);
+      await interaction.reply({ content: `⏳ Wait **${secs}s** before starting a new game.`, flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    // One game at a time — leave old button enabled
+    if (activeGames.has(userId)) {
+      await interaction.reply({
+        content: '❌ You already have an active blackjack game. Finish it first!',
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
+    }
+
+    // Balance — disable button and show error
+    const balance = getPlayer(userId).balance ?? 0;
+    if (balance < bet) {
+      await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+      const msg = await interaction.followUp({
+        content: `❌ You don't have enough Trinkets to place that bet.\nYour balance: **${balance} 🪙**`,
+        flags: 64,
+      });
+      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      return;
+    }
+
+    // Disable old button, start new game as a new message
+    clearTimeout(session.timeout);
+    playAgainSessions.delete(userId);
+    await interaction.update({ embeds: interaction.message.embeds, components: [playAgainRow(userId, true)] });
+
+    await startGame({
+      userId,
+      username,
+      bet,
+      sendGame: opts => interaction.followUp(opts),
+    });
   },
 };

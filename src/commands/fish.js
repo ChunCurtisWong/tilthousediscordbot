@@ -12,8 +12,8 @@ const FISH_COOLDOWN_MS = 5_000;
 const RECAST_TIMEOUT_MS = 5 * 60 * 1000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// In-memory state for Recast buttons — cleared on bot restart (intentional)
-const activeSessions = new Map(); // userId → { cast, timeout, message }
+// In-memory state — cleared on bot restart (intentional)
+const activeSessions = new Map(); // userId → { cast, castKey, timeout, message }
 
 // ─── Data tables ──────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ function phaseEmbed(phase, username, cast) {
 }
 
 function buildResultEmbed(cast, result, username) {
-  const title = `${username}'s Cast (${cast.tier})`;
+  const title    = `${username}'s Cast (${cast.tier})`;
   const castLine = `Cast: **-${cast.cost} 🪙**`;
 
   if (result.type === 'loss') {
@@ -159,8 +159,8 @@ function buildResultEmbed(cast, result, username) {
 
   let color;
   if (fish.name === 'Shark' || fish.name === 'Squid') color = '#FFD700';
-  else if (fish.reward > 0) color = '#00CC66';
-  else                      color = '#FF4444';
+  else if (fish.reward > 0)                           color = '#00CC66';
+  else                                                color = '#FF4444';
 
   const rewardLine = fish.reward > 0
     ? `You caught a ${fish.name}!\nEarned: **+${fish.reward} 🪙**`
@@ -183,11 +183,24 @@ function recastRow(userId, disabled = false) {
   );
 }
 
+function setupSession(userId, cast, castKey, message) {
+  const prev = activeSessions.get(userId);
+  if (prev) clearTimeout(prev.timeout);
+
+  const timeout = setTimeout(async () => {
+    if (!activeSessions.has(userId)) return;
+    activeSessions.delete(userId);
+    try { await message.edit({ components: [recastRow(userId, true)] }); } catch { /* ignore */ }
+  }, RECAST_TIMEOUT_MS);
+
+  activeSessions.set(userId, { cast, castKey, timeout, message });
+}
+
 // ─── Shared cast logic ────────────────────────────────────────────────────────
 
-async function runCast({ userId, username, cast, castKey, editReply }) {
+async function runCast({ userId, username, cast, castKey, message }) {
   // Phase 1
-  await editReply({ embeds: [phaseEmbed(1, username, cast)], components: [] });
+  await message.edit({ embeds: [phaseEmbed(1, username, cast)], components: [] });
 
   // Deduct cost and set cooldown immediately
   await addTrinkets(userId, -cast.cost, username);
@@ -216,18 +229,15 @@ async function runCast({ userId, username, cast, castKey, editReply }) {
 
   // Phase 2
   await delay(1500);
-  await editReply({ embeds: [phaseEmbed(2, username, cast)], components: [] });
+  await message.edit({ embeds: [phaseEmbed(2, username, cast)], components: [] });
 
   // Phase 3
   await delay(1500);
-  await editReply({ embeds: [phaseEmbed(3, username, cast)], components: [] });
+  await message.edit({ embeds: [phaseEmbed(3, username, cast)], components: [] });
 
   // Final result with Recast button
   await delay(1000);
-  await editReply({
-    embeds: [buildResultEmbed(cast, result, username)],
-    components: [recastRow(userId)],
-  });
+  await message.edit({ embeds: [buildResultEmbed(cast, result, username)], components: [recastRow(userId)] });
 }
 
 // ─── Command ──────────────────────────────────────────────────────────────────
@@ -274,71 +284,37 @@ module.exports = {
       return;
     }
 
-    // Send placeholder to get a message reference, then run the full cast
     await interaction.reply({ embeds: [phaseEmbed(1, username, cast)], components: [] });
     const message = await interaction.fetchReply();
 
-    // Clear any previous session for this user
-    const prev = activeSessions.get(userId);
-    if (prev) {
-      clearTimeout(prev.timeout);
-      activeSessions.delete(userId);
-    }
-
-    await runCast({
-      userId,
-      username,
-      cast,
-      castKey,
-      editReply: opts => interaction.editReply(opts),
-    });
-
-    // Register Recast session with 5-min cleanup
-    const timeout = setTimeout(async () => {
-      if (!activeSessions.has(userId)) return;
-      activeSessions.delete(userId);
-      try {
-        await message.edit({ components: [recastRow(userId, true)] });
-      } catch {
-        // Message may have been deleted — ignore
-      }
-    }, RECAST_TIMEOUT_MS);
-
-    activeSessions.set(userId, { cast, castKey, timeout, message });
+    await runCast({ userId, username, cast, castKey, message });
+    setupSession(userId, cast, castKey, message);
   },
 
   // ─── Button: Recast ────────────────────────────────────────────────────────
 
   async handleRecast(interaction, userId) {
-    if (interaction.user.id !== userId) {
-      // Silently ignore clicks from other users
-      return interaction.deferUpdate();
-    }
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
 
     const session = activeSessions.get(userId);
-    if (!session) {
-      return interaction.deferUpdate();
-    }
+    if (!session) return interaction.deferUpdate();
 
     const { cast, castKey } = session;
     const username = interaction.user.username;
 
-    // Cooldown check
+    // Cooldown — leave old button enabled so they can retry
     const remaining = checkCooldown(userId, 'fish', FISH_COOLDOWN_MS);
     if (remaining !== null) {
       const secs = Math.ceil(remaining / 1000);
-      const msg = await interaction.reply({ content: `⏳ Wait **${secs}s** before casting again.`, flags: 64 });
-      setTimeout(() => msg.delete().catch(() => {}), 15_000);
+      await interaction.reply({ content: `⏳ Wait **${secs}s** before casting again.`, flags: 64 });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
       return;
     }
 
-    // Balance check
+    // Balance — disable button and show error
     const balance = getPlayer(userId).balance ?? 0;
     if (balance < cast.cost) {
-      await interaction.update({
-        embeds: interaction.message.embeds,
-        components: [recastRow(userId, true)],
-      });
+      await interaction.update({ embeds: interaction.message.embeds, components: [recastRow(userId, true)] });
       const msg = await interaction.followUp({
         content: `❌ You don't have enough Trinkets to cast.\nYour balance: **${balance} 🪙**`,
         flags: 64,
@@ -347,27 +323,11 @@ module.exports = {
       return;
     }
 
-    // Reset the 5-min cleanup timer
-    clearTimeout(session.timeout);
-    const newTimeout = setTimeout(async () => {
-      if (!activeSessions.has(userId)) return;
-      activeSessions.delete(userId);
-      try {
-        await session.message.edit({ components: [recastRow(userId, true)] });
-      } catch {
-        // ignore
-      }
-    }, RECAST_TIMEOUT_MS);
-    session.timeout = newTimeout;
+    // Disable old button, post new cast message
+    await interaction.update({ embeds: interaction.message.embeds, components: [recastRow(userId, true)] });
+    const newMsg = await interaction.followUp({ embeds: [phaseEmbed(1, username, cast)], components: [] });
 
-    await interaction.deferUpdate();
-
-    await runCast({
-      userId,
-      username,
-      cast,
-      castKey,
-      editReply: opts => interaction.editReply(opts),
-    });
+    await runCast({ userId, username, cast, castKey, message: newMsg });
+    setupSession(userId, cast, castKey, newMsg);
   },
 };

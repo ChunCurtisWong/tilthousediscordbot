@@ -154,6 +154,15 @@ module.exports = {
             await betCmd.handleDecline(interaction, betId);
           }
 
+        // Coinflip buttons
+        } else if (customId.startsWith('cf:')) {
+          const coinflipCmd = interaction.client.commands.get('th-coinflip');
+          if (customId.startsWith('cf:again:')) {
+            const playerId = customId.slice('cf:again:'.length);
+            logger.info('Button: coinflip flip again', { playerId, userId: interaction.user.id });
+            await coinflipCmd.handleFlipAgain(interaction, playerId);
+          }
+
         // Fish buttons
         } else if (customId.startsWith('fc:')) {
           const fishCmd = interaction.client.commands.get('th-fish');
@@ -183,6 +192,10 @@ module.exports = {
             const playerId = customId.slice('bj:stand:'.length);
             logger.info('Button: blackjack stand', { playerId, userId: interaction.user.id });
             await bjCmd.handleStand(interaction, playerId);
+          } else if (customId.startsWith('bj:again:')) {
+            const playerId = customId.slice('bj:again:'.length);
+            logger.info('Button: blackjack play again', { playerId, userId: interaction.user.id });
+            await bjCmd.handlePlayAgain(interaction, playerId);
           }
 
         // Restore buttons
