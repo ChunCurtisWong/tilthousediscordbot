@@ -279,12 +279,14 @@ module.exports = {
       return;
     }
 
-    // End any existing session cleanly
-    const prev = activeSessions.get(userId);
-    if (prev) {
-      clearTimeout(prev.timeout);
-      activeSessions.delete(userId);
-      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    // Block if session already active
+    if (activeSessions.has(userId)) {
+      await interaction.reply({
+        content: '❌ You already have an active blackjack session. Stop it before starting a new one.',
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     const session = { bet, gamesPlayed: 0, spent: 0, earned: 0, net: 0, timeout: null, message: null };

@@ -174,6 +174,10 @@ module.exports = {
             const playerId = customId.slice('fc:changebait:'.length);
             logger.info('Button: fish change bait', { playerId, userId: interaction.user.id });
             await fishCmd.handleChangeBait(interaction, playerId);
+          } else if (customId.startsWith('fc:icebox:')) {
+            const playerId = customId.slice('fc:icebox:'.length);
+            logger.info('Button: fish icebox', { playerId, userId: interaction.user.id });
+            await fishCmd.handleIcebox(interaction, playerId);
           } else if (customId.startsWith('fc:refresh:')) {
             const playerId = customId.slice('fc:refresh:'.length);
             logger.info('Button: fish refresh', { playerId, userId: interaction.user.id });

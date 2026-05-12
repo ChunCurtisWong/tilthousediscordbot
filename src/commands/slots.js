@@ -203,12 +203,14 @@ module.exports = {
       return;
     }
 
-    // End any existing session cleanly
-    const prev = activeSessions.get(userId);
-    if (prev) {
-      clearTimeout(prev.timeout);
-      activeSessions.delete(userId);
-      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    // Block if session already active
+    if (activeSessions.has(userId)) {
+      await interaction.reply({
+        content: '❌ You already have an active slots session. Stop it before starting a new one.',
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     await interaction.reply({ embeds: [spinningEmbed([], 0, bet)], components: [] });

@@ -189,12 +189,16 @@ function gameButtons(userId, recastDisabled = false) {
       .setLabel('Change Bait')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
-      .setCustomId(`fc:refresh:${userId}`)
-      .setLabel('Refresh')
+      .setCustomId(`fc:icebox:${userId}`)
+      .setLabel('Icebox')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`fc:home:${userId}`)
       .setLabel('Go Home')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`fc:refresh:${userId}`)
+      .setLabel('Refresh')
       .setStyle(ButtonStyle.Secondary)
   );
 }
@@ -391,13 +395,14 @@ module.exports = {
       return;
     }
 
-    // End any existing session cleanly
-    const prev = activeSessions.get(userId);
-    if (prev) {
-      clearTimeout(prev.timeout);
-      activeSessions.delete(userId);
-      cleanupIceboxMessages(prev);
-      try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
+    // Block if session already active
+    if (activeSessions.has(userId)) {
+      await interaction.reply({
+        content: '❌ You already have an active fishing session. Go Home before starting a new one.',
+        flags: 64,
+      });
+      setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
+      return;
     }
 
     await interaction.reply({ embeds: [phaseEmbed(1, username, cast)], components: [] });
@@ -461,6 +466,22 @@ module.exports = {
     cleanupIceboxMessages(session);
 
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
+  },
+
+  // ─── Button: Icebox ───────────────────────────────────────────────────────
+
+  async handleIcebox(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.deferUpdate();
+
+    const session = activeSessions.get(userId);
+    if (!session) return interaction.deferUpdate();
+
+    const username = interaction.user.username;
+    const embed = buildSummaryEmbed(session).setTitle(`🧊 ${username}'s Icebox`);
+
+    await interaction.reply({ embeds: [embed], components: [iceboxButtons(userId)] });
+    const msg = await interaction.fetchReply();
+    session.iceboxMessages.push(msg);
   },
 
   // ─── Button: Refresh (game embed) ─────────────────────────────────────────
