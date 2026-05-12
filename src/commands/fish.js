@@ -30,11 +30,11 @@ const CASTS = {
       { emoji: '🎣', name: 'Rod',  cost: 25 },
     ],
     fish: [
-      { emoji: '🐟', name: 'Common Fish',   weight: 55, reward:   10 },
+      { emoji: '🐟', name: 'Common Fish',   weight: 56, reward:   10 },
       { emoji: '🐠', name: 'Tropical Fish', weight: 20, reward:   25 },
       { emoji: '🐡', name: 'Puffer Fish',   weight: 10, reward:   50 },
       { emoji: '🦈', name: 'Shark',         weight:  5, reward:  150 },
-      { emoji: '🦑', name: 'Squid',         weight:  2, reward:  400 },
+      { emoji: '🦑', name: 'Squid',         weight:  1, reward:  600 },
       { emoji: '🧦', name: 'Old Boot',      weight:  5, reward:    0 },
       { emoji: '💀', name: 'Skeleton Fish', weight:  3, reward:  -50 },
     ],
@@ -49,11 +49,11 @@ const CASTS = {
       { emoji: '🎣', name: 'Rod',  cost: 50 },
     ],
     fish: [
-      { emoji: '🐟', name: 'Common Fish',   weight: 30, reward:   10 },
+      { emoji: '🐟', name: 'Common Fish',   weight: 33, reward:   10 },
       { emoji: '🐠', name: 'Tropical Fish', weight: 25, reward:   25 },
       { emoji: '🐡', name: 'Puffer Fish',   weight: 20, reward:   50 },
       { emoji: '🦈', name: 'Shark',         weight: 12, reward:  150 },
-      { emoji: '🦑', name: 'Squid',         weight:  6, reward:  400 },
+      { emoji: '🦑', name: 'Squid',         weight:  3, reward:  600 },
       { emoji: '🧦', name: 'Old Boot',      weight:  4, reward:    0 },
       { emoji: '💀', name: 'Skeleton Fish', weight:  3, reward:  -50 },
     ],
@@ -72,8 +72,8 @@ const CASTS = {
       { emoji: '🐠', name: 'Tropical Fish', weight: 18, reward:   25 },
       { emoji: '🐡', name: 'Puffer Fish',   weight: 25, reward:   50 },
       { emoji: '🦈', name: 'Shark',         weight: 20, reward:  150 },
-      { emoji: '🦑', name: 'Squid',         weight: 12, reward:  400 },
-      { emoji: '🧦', name: 'Old Boot',      weight:  2, reward:    0 },
+      { emoji: '🦑', name: 'Squid',         weight:  8, reward:  600 },
+      { emoji: '🧦', name: 'Old Boot',      weight:  6, reward:    0 },
       { emoji: '💀', name: 'Skeleton Fish', weight: 10, reward:  -50 },
     ],
   },
@@ -235,6 +235,7 @@ function startSessionTimeout(session, userId) {
   session.timeout = setTimeout(async () => {
     if (!activeSessions.has(userId)) return;
     activeSessions.delete(userId);
+    cleanupIceboxMessages(session);
     try { await session.message.edit({ embeds: [buildSummaryEmbed(session)], components: [] }); }
     catch { /* ignore */ }
   }, SESSION_TIMEOUT_MS);
@@ -245,13 +246,20 @@ function newSession(cast, castKey, message) {
     cast,
     castKey,
     castsByType: { standard: 0, enhanced: 0, premium: 0 },
-    fishLog: new Map(),   // fishName → { emoji, count, totalReward }
-    itemLosses: [],       // { emoji, msg, cost }
+    fishLog: new Map(),    // fishName → { emoji, count, totalReward }
+    itemLosses: [],        // { emoji, msg, cost }
+    iceboxMessages: [],    // Message refs to delete when session ends
     spent: 0,
     earned: 0,
     timeout: null,
     message,
   };
+}
+
+function cleanupIceboxMessages(session) {
+  for (const msg of session.iceboxMessages) {
+    msg.delete().catch(() => {});
+  }
 }
 
 // ─── Shared cast logic ────────────────────────────────────────────────────────
@@ -361,6 +369,7 @@ module.exports = {
     if (prev) {
       clearTimeout(prev.timeout);
       activeSessions.delete(userId);
+      cleanupIceboxMessages(prev);
       try { await prev.message.edit({ embeds: [buildSummaryEmbed(prev)], components: [] }); } catch { /* ignore */ }
     }
 
@@ -422,6 +431,7 @@ module.exports = {
 
     clearTimeout(session.timeout);
     activeSessions.delete(userId);
+    cleanupIceboxMessages(session);
 
     await interaction.update({ embeds: [buildSummaryEmbed(session)], components: [] });
   },
@@ -491,6 +501,7 @@ module.exports = {
     setTimeout(() => interaction.deleteReply().catch(() => {}), 15_000);
   },
 
-  // Accessor for /th-icebox
+  // Exported for /th-icebox
+  buildSummaryEmbed,
   getSession: userId => activeSessions.get(userId),
 };
