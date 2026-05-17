@@ -217,15 +217,6 @@ async function respondAndDelete(interaction, opts) {
   }
 }
 
-// Silently acknowledge an interaction with no visible response.
-async function silentAck(interaction) {
-  if (interaction.isButton() || interaction.isStringSelectMenu()) {
-    await interaction.deferUpdate();
-  } else {
-    await interaction.deferReply({ flags: 64 });
-    await interaction.deleteReply().catch(() => {});
-  }
-}
 
 // ─── Bulleted player list ─────────────────────────────────────────────────────
 
@@ -467,11 +458,11 @@ async function processLeave(interaction, game, userId) {
 
   // Host leaving closes the queue silently — no payout, no message
   if (playerIdx === 0) {
-    await silentAck(interaction);
     await markQueueEmbedClosed(interaction.client, game, queueData);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
     logger.info('Queue closed — host left', { userId, game });
+    interaction.deleteReply().catch(() => {});
     return;
   }
 
@@ -1144,11 +1135,12 @@ module.exports = {
 
   // ── Session prompt: Yes ─────────────────────────────────────────
   async handleSessionYes(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players?.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
     // Compute payout (filter fill to window only)
@@ -1184,7 +1176,7 @@ module.exports = {
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
 
     // Replace host confirmation with session summary
-    await interaction.update({
+    await interaction.editReply({
       content: null,
       embeds:  [buildSessionSummaryEmbed(game, queueData)],
       components: [buildSessionJoinRow(game, queueData)],
@@ -1246,14 +1238,15 @@ module.exports = {
 
   // ── Session prompt: No ──────────────────────────────────────────
   async handleSessionNo(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players?.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
-    await interaction.update({
+    await interaction.editReply({
       content: null,
       embeds: [
         new EmbedBuilder()
@@ -1446,15 +1439,16 @@ module.exports = {
 
   // ── Session No: Close Queue ──────────────────────────────────────
   async handleSessionNoClose(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players?.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
     const promptMessage = interaction.message;
-    await interaction.update({
+    await interaction.editReply({
       content: null,
       embeds: [
         new EmbedBuilder()
@@ -1552,11 +1546,12 @@ module.exports = {
 
   // ── Host prompt: Fulfilled ──────────────────────────────────────
   async handleHostFulfilled(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
     const now     = Math.floor(Date.now() / 1000);
@@ -1566,7 +1561,7 @@ module.exports = {
     storage.saveQueue(game, queueData);
 
     const pingList = queueData.players.map(p => `<@${p.userId}>`).join(' ');
-    await interaction.update({
+    await interaction.editReply({
       content: `✅ **${game}** marked as fulfilled — queue closes <t:${closeTs}:R>. Fill spots still available!`,
       components: [],
     });
@@ -1592,11 +1587,12 @@ module.exports = {
 
   // ── Host prompt: Extend ─────────────────────────────────────────
   async handleHostExtend(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
 
     // Add 30 minutes to lastActivityAt so the inactivity timer is pushed forward
@@ -1604,20 +1600,19 @@ module.exports = {
     queueData.hostPromptMessageId = null;
     storage.saveQueue(game, queueData);
 
-    await interaction.update({ content: `⏰ Timer extended by 30 minutes for **${game}**.`, components: [] });
+    await interaction.editReply({ content: `⏰ Timer extended by 30 minutes for **${game}**.`, components: [] });
     logger.info('Queue timer extended by host', { game, userId });
   },
 
   // ── Host prompt: Clear ──────────────────────────────────────────
   async handleHostClear(interaction, game) {
+    await interaction.deferUpdate();
     const queueData = storage.getQueue(game);
     const userId    = interaction.user.id;
 
     if (!queueData.players.length || queueData.players[0].userId !== userId) {
-      return interaction.reply({ content: '❌ Only the queue host can use this button.', flags: 64 });
+      return interaction.followUp({ content: '❌ Only the queue host can use this button.', flags: 64 });
     }
-
-    await interaction.deferUpdate();
     await markQueueEmbedClosed(interaction.client, game, queueData);
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
