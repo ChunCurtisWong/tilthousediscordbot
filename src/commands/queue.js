@@ -217,6 +217,16 @@ async function respondAndDelete(interaction, opts) {
   }
 }
 
+// Silently acknowledge an interaction with no visible response.
+async function silentAck(interaction) {
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    await interaction.deferUpdate();
+  } else {
+    await interaction.deferReply({ flags: 64 });
+    await interaction.deleteReply().catch(() => {});
+  }
+}
+
 // ─── Bulleted player list ─────────────────────────────────────────────────────
 
 function bulletList(players) {
@@ -454,6 +464,16 @@ async function processLeave(interaction, game, userId) {
   }
 
   const channel = interaction.channel ?? await interaction.client.channels.fetch(interaction.channelId);
+
+  // Host leaving closes the queue silently — no payout, no message
+  if (playerIdx === 0) {
+    await silentAck(interaction);
+    await markQueueEmbedClosed(interaction.client, game, queueData);
+    await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
+    storage.deleteQueue(game);
+    logger.info('Queue closed — host left', { userId, game });
+    return;
+  }
 
   if (playerIdx !== -1) {
     queueData.players.splice(playerIdx, 1);
