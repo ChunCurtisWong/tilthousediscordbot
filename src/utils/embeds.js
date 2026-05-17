@@ -25,8 +25,9 @@ function buildQueueEmbed(game, queueData) {
     color = '#5865F2';
   }
 
-  // ── Description: status + player limits + scheduled time ────────
-  let description = `**Status:** ${status}`;
+  // ── Description: host + status + player limits + scheduled time ────
+  const hostName = players[0]?.username ?? 'Unknown';
+  let description = `*Started by ${hostName}*\n\n**Status:** ${status}`;
   if (min !== null) description += `\n👥 Min Players: ${min}`;
   if (max !== null) description += `\n🔒 Max Players: ${max}`;
   if (min === null && max === null) description += `\n👥 Players: Unlimited`;
