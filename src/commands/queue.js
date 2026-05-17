@@ -462,7 +462,8 @@ async function processLeave(interaction, game, userId) {
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
     logger.info('Queue closed — host left', { userId, game });
-    interaction.deleteReply().catch(() => {});
+    // Do NOT call deleteReply() here — after deferUpdate(), deleteReply() would delete the
+    // original queue embed message, which we just edited to show the closed reason.
     return;
   }
 
