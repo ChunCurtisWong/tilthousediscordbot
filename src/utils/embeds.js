@@ -291,11 +291,16 @@ function buildSessionJoinRow(game, queueData) {
 /**
  * Builds a closed-state embed for a queue that has ended.
  */
-function buildClosedQueueEmbed(game) {
+function buildClosedQueueEmbed(game, queueData = null, reason = null) {
+  const hostName = queueData?.players?.[0]?.username ?? null;
+  let description = '';
+  if (hostName) description += `*Started by ${hostName}*\n\n`;
+  description += 'This queue has closed and is no longer accepting players.';
+  if (reason) description += `\n\n${reason}`;
   return new EmbedBuilder()
     .setColor('#888888')
     .setTitle(`⏹️ ${game} — Queue Closed`)
-    .setDescription('This queue has closed and is no longer accepting players.')
+    .setDescription(description)
     .setTimestamp();
 }
 

@@ -44,14 +44,14 @@ async function updateQueueEmbed(client, game, queueData) {
 
 // ─── Mark the original queue embed as closed ──────────────────────────────────
 
-async function markQueueEmbedClosed(client, game, queueData) {
+async function markQueueEmbedClosed(client, game, queueData, reason = null) {
   if (!queueData.messageId || !queueData.channelId) return;
   try {
     const ch  = await client.channels.fetch(queueData.channelId);
     const msg = await ch.messages.fetch(queueData.messageId);
     await msg.edit({
       content: null,
-      embeds: [buildClosedQueueEmbed(game)],
+      embeds: [buildClosedQueueEmbed(game, queueData, reason)],
       components: [buildClosedQueueComponents()],
     });
   } catch {

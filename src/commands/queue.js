@@ -458,7 +458,7 @@ async function processLeave(interaction, game, userId) {
 
   // Host leaving closes the queue silently — no payout, no message
   if (playerIdx === 0) {
-    await markQueueEmbedClosed(interaction.client, game, queueData);
+    await markQueueEmbedClosed(interaction.client, game, queueData, 'Queue closed — host left the queue.');
     await deleteMessageById(interaction.client, queueData.channelId, queueData.readyMessageId);
     storage.deleteQueue(game);
     logger.info('Queue closed — host left', { userId, game });
